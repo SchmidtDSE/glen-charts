@@ -1,0 +1,11 @@
+{
+  "name": "glen-charts",
+  "version": "0.1.0",
+  "description": "Config-driven, no-LLM area explorers over the DuckDB geo catalog: fixed SQL per theme, precomputed results, reports with runnable code.",
+  "type": "module",
+  "license": "BSD-2-Clause",
+  "repository": "github:SchmidtDSE/glen-charts",
+  "bin": { "glen-charts": "scripts/precompute.mjs" },
+  "files": ["core", "charts", "sources", "scripts"],
+  "engines": { "node": ">=20.6" }
+}

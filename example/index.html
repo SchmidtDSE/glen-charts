@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coastal band example</title>
+    <script src="https://unpkg.com/maplibre-gl@5.22.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@5.22.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+    <link rel="stylesheet" href="../core/style.css">
+</head>
+<body>
+    <header id="app-header"><div class="brand"><span class="brand-mark"></span><h1>Coastal band example</h1></div></header>
+    <main id="glen"></main>
+    <script type="module">
+        import { createExplorer } from '../core/explorer.js';
+        createExplorer();
+    </script>
+</body>
+</html>

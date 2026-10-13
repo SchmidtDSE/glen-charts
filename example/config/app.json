@@ -1,0 +1,61 @@
+{
+    "id": "glen-charts-example",
+    "title": "Coastal band example",
+    "mcp_url": "https://duckdb-mcp.nrp-nautilus.io/mcp",
+    "view": {
+        "center": [
+            0,
+            20
+        ],
+        "zoom": 1.4
+    },
+    "format": {
+        "nodata": "no data"
+    },
+    "labels": {
+        "sections": "Pillars"
+    },
+    "params": [
+        {
+            "id": "width",
+            "label": "Band width",
+            "token": "WIDTH",
+            "options": [
+                5,
+                10,
+                20,
+                50
+            ],
+            "default": 10,
+            "format": "{} km"
+        }
+    ],
+    "overview": "physical",
+    "themes": [],
+    "jurisdictions": [
+        {
+            "id": "meow",
+            "label": "Coastal ecoregions",
+            "singular": "Coastal ecoregion",
+            "peer_label": "coastal ecoregions",
+            "aoi": "SELECT DISTINCT h0, h8 FROM read_parquet('s3://public-coastal/meow-coastal-band/hex/h0=*/data_0.parquet') WHERE ECO_CODE = {{ID}} AND dist_km <= {{WIDTH}}",
+            "list": "WITH c AS (SELECT DISTINCT CAST(ECO_CODE AS INTEGER) AS id, ECOREGION AS name, h3_cell_to_parent(h8, 5) AS h5 FROM read_parquet('s3://public-coastal/meow-coastal-band/hex/h0=*/data_0.parquet') WHERE dist_km <= {{WIDTH}}), p AS (SELECT id, name, h3_cell_to_lng(h5) AS x, h3_cell_to_lat(h5) AS y FROM c), g AS (SELECT id, ANY_VALUE(name) AS name, MIN(x) AS ax0, MAX(x) AS ax1, MIN((x + 360) % 360) AS sx0, MAX((x + 360) % 360) AS sx1, MIN(y) - 0.3 AS ymin, MAX(y) + 0.3 AS ymax FROM p GROUP BY id) SELECT id, name, CASE WHEN sx1 - sx0 < ax1 - ax0 THEN (CASE WHEN sx0 > 180 THEN sx0 - 360 ELSE sx0 END) ELSE ax0 END - 0.3 AS xmin, ymin, CASE WHEN sx1 - sx0 < ax1 - ax0 THEN (CASE WHEN sx1 > 180 THEN sx1 - 360 ELSE sx1 END) ELSE ax1 END + 0.3 AS xmax, ymax FROM g ORDER BY name",
+            "boundary": {
+                "url": "https://s3-west.nrp-nautilus.io/public-coastal/meow-coastal-band.pmtiles",
+                "source_layer": "meow-coastal-band",
+                "id_prop": "ECO_CODE",
+                "name_prop": "ECOREGION",
+                "filter": [
+                    "<=",
+                    [
+                        "get",
+                        "dist_max_km"
+                    ],
+                    "{{WIDTH}}"
+                ]
+            },
+            "list_params": true
+        }
+    ],
+    "intro": "<p>A minimal glen-charts app: pick any of the 220 coastal marine ecoregions (MEOW) by name or on the map, and a band width. The panel shows the band's sea and land area, depth and elevation, and where the ecoregion ranks among all of them.</p><p class=\"tile-note\">Data: MEOW coastal band (derived from MEOW, CC-BY-NC-3.0, The Nature Conservancy / WWF; GEBCO 2025; Copernicus GLO-90).</p>"
+}

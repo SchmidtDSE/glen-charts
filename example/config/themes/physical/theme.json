@@ -1,0 +1,44 @@
+{
+    "label": "Physical setting",
+    "color": "#2a78d6",
+    "blurb": "Band area, depth and elevation, ranked among all coastal ecoregions.",
+    "queries": {
+        "stats": {
+            "file": "stats.sql",
+            "all": "stats-all.sql"
+        }
+    },
+    "headlines": [
+        {
+            "query": "stats",
+            "row": {
+                "variable": "sea_area"
+            },
+            "field": "value",
+            "label": "Sea area in band",
+            "format": "km2"
+        },
+        {
+            "query": "stats",
+            "row": {
+                "variable": "mean_elev"
+            },
+            "field": "value",
+            "label": "Mean land elevation",
+            "format": "num1"
+        }
+    ],
+    "charts": [
+        {
+            "type": "percentile-strip",
+            "title": "Among all coastal ecoregions",
+            "query": "stats",
+            "key": "variable",
+            "label": "label",
+            "value": "value",
+            "format_field": "fmt",
+            "scale_field": "scale",
+            "note": "Widths of 10 and 20 km are precomputed; other widths run live without ranks."
+        }
+    ]
+}
