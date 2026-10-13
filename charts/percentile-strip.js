@@ -23,10 +23,11 @@
  *   scale         "log" for a log axis, or scale_field: a column holding it per row
  *   peer_label    e.g. "coastal ecoregions"   (default: the area type's peer_label)
  *   note          text under the chart, e.g. "Provisional scores"
+ *   label_lines   wrap long variable names onto up to N lines   (default 2)
  */
 
 import { fmt, escapeHtml, isMissing, ordinal } from '../core/format.js';
-import { hover, el } from '../core/charts.js';
+import { hover, el, rowLabel } from '../core/charts.js';
 
 export const percentileStrip = {
     async load({ engine, theme, chart, aoi }) {
@@ -68,10 +69,7 @@ export const percentileStrip = {
             const name = String(r[labelCol] ?? r[key]);
             const format = (spec.format_field && r[spec.format_field]) || spec.format;
             const log = ((spec.scale_field && r[spec.scale_field]) || spec.scale) === 'log';
-            const lab = el('text', { x: labelW - 8, y: cy + 4, 'text-anchor': 'end' });
-            lab.textContent = name.length > maxChars ? name.slice(0, maxChars - 1) + '…' : name;
-            if (name.length > maxChars) { const t = el('title'); t.textContent = name; lab.appendChild(t); }
-            svg.appendChild(lab);
+            svg.appendChild(rowLabel(name, labelW - 8, cy, maxChars, spec.label_lines || 2));
 
             const v = isMissing(r[valueCol]) ? null : Number(r[valueCol]);
             const peersRows = byKey.get(String(r[key])) || [];

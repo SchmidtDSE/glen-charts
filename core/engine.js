@@ -8,7 +8,9 @@
  * Template tokens
  *   {{AOI}}    → a SELECT returning DISTINCT (h0, h8) res-8 cells of the area.
  *   {{AOI10}}  → a SELECT returning DISTINCT (h0, h8, h10) res-10 cells.
- *   {{ID}}     → (jurisdiction aoi/aoi10 templates) the sanitized feature id.
+ *   {{ID}}     → the sanitized feature id, in area-type aoi/aoi10 templates and,
+ *                for a named area, in theme SQL ({{KIND}} is its area type).
+ *                Unbound for the whole region and for drawn polygons.
  *   {{SITE}}   → (jurisdiction aoi/aoi10 templates) absolute URL of the site
  *                folder, for templates that read the site's own data files.
  *   {{<PARAM>}} → the current value of each app param (app.json "params",
@@ -78,11 +80,33 @@ export function sanitizeId(id) {
     return s;
 }
 
-export function expand(template, tokens) {
-    return template.replace(/\{\{(\w+)\}\}/g, (m, k) => {
-        if (!(k in tokens)) throw new Error(`Unbound template token ${m}`);
-        return tokens[k];
-    });
+/**
+ * Fill {{TOKEN}}s in a SQL template. Tokens inside `--` line comments are
+ * left as written, so a comment can name a token without needing it bound.
+ * `where` names the template in the error for an unbound token.
+ */
+export function expand(template, tokens, where = '') {
+    return template.split('\n').map(line => {
+        const c = commentStart(line);
+        const code = c < 0 ? line : line.slice(0, c);
+        const filled = code.replace(/\{\{(\w+)\}\}/g, (m, k) => {
+            if (!(k in tokens)) throw new Error(`Unbound template token ${m}${where ? ` in ${where}` : ''}; bound here: ${Object.keys(tokens).join(', ')}`);
+            return tokens[k];
+        });
+        return c < 0 ? filled : filled + line.slice(c);
+    }).join('\n');
+}
+
+/** Index of a `--` comment outside a quoted string, or -1. */
+function commentStart(line) {
+    let q = null;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (q) { if (ch === q) q = null; continue; }
+        if (ch === "'" || ch === '"') q = ch;
+        else if (ch === '-' && line[i + 1] === '-') return i;
+    }
+    return -1;
 }
 
 /* ------------------------------------------------------------------ params */
@@ -191,21 +215,26 @@ export class Engine {
         const app = this.config.app;
         const params = aoi.params || {};
         const tokens = { ...paramTokens(app, params), AOI: aoi.sql, AOI10: aoi.sql10 ?? '' };
+        if (aoi.id != null && aoi.kind && aoi.kind !== 'polygon') { tokens.ID = String(aoi.id); tokens.KIND = aoi.kind; }
         if (aoi.bands10) tokens.BANDS10 = aoi.bands10;
         if (aoi.origin) { tokens.ORIGIN_LAT = String(+aoi.origin.lat); tokens.ORIGIN_LON = String(+aoi.origin.lon); }
         Object.assign(tokens, aoi.tokens || {});
         for (const [name, fn] of Object.entries(this.tokens)) tokens[name] = fn(aoi, app, params);
-        return expand(theme.sql[queryName], tokens);
+        return expand(theme.sql[queryName], tokens, `${theme.id}/${theme.queries[queryName]?.file || queryName}`);
     }
 
     run(theme, queryName, aoi) {
         const key = `${aoi.key}|${theme.id}|${queryName}`;
         if (!this.cache.has(key)) {
-            const sql = this.sqlFor(theme, queryName, aoi);
-            // precomputed rows for a named area when they exist, else live
-            const p = this.precomputed(theme, queryName, aoi).then(rows => rows ?? this.client.query(sql, { aoi })).catch(err => {
+            // precomputed rows for a named area when they exist, else live; the
+            // SQL is expanded only when it has to run, so a template problem
+            // never hides rows that were already computed
+            const p = this.precomputed(theme, queryName, aoi).then(rows => {
+                if (rows) return rows;
+                const sql = this.sqlFor(theme, queryName, aoi);
+                return this.client.query(sql, { aoi }).catch(err => { err.sql = sql; throw err; });
+            }).catch(err => {
                 this.cache.delete(key);          // let a retry re-run it
-                err.sql = sql;
                 throw err;
             });
             this.cache.set(key, p);

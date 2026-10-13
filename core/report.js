@@ -138,7 +138,7 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
     card.querySelector('details').addEventListener('toggle', function once() {
         mb.innerHTML = (theme.method ? `<p>${escapeHtml(theme.method)}</p>` : '') +
             Object.keys(theme.queries)
-                .map(q => `<div><b>${escapeHtml(q)}</b></div><pre>${escapeHtml(engine.sqlFor(theme, q, aoi))}</pre>`).join('');
+                .map(q => `<div><b>${escapeHtml(q)}</b></div><pre>${escapeHtml(safeSql(engine, theme, q, aoi))}</pre>`).join('');
     }, { once: true });
     return card;
 }
@@ -191,3 +191,8 @@ export function pickRow(rows, where) {
 export const pick = (obj, path) => String(path).split('.').reduce((o, k) => o?.[k], obj) ?? null;
 
 export const shortErr = err => (err.message || String(err)).split('\n')[0].slice(0, 160);
+
+/** The SQL as it runs for this area, or the template error as text. */
+export function safeSql(engine, theme, q, aoi) {
+    try { return engine.sqlFor(theme, q, aoi); } catch (err) { return `-- ${err.message}`; }
+}

@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.1.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.1.1**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.0/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.1/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.0/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.1/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -44,7 +44,7 @@ The page also loads MapLibre GL and PMTiles (see `example/index.html`). All fetc
 | `reference` | optional published source to compare with on the region's own view: `{ values: "data/report.json", label, chart_label?, title?, citation?, url?, note? }` |
 | `labels` | `{ area, sections, place_hint, map_chips }` step titles |
 | `format` | `{ nodata: "—", pct_decimals: "auto" | 1 }` |
-| `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected }` |
+| `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }` |
 | `tracts` | `{ url, source_layer, id_prop }` for themes that color tracts (`theme.map`) |
 | `live_note` | text shown when a named area has no precomputed file |
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
@@ -67,6 +67,7 @@ An area type:
 - Ids match by value, so a numeric id in the tiles (`20001.0`) finds `20001` in the list.
 - `list_params: true` when the list depends on a param (areas that exist only at some settings); it is then re-read when the param changes.
 - The boundary `filter` may contain param tokens (`"{{WIDTH}}"`, filled as a number when numeric) and follows the param.
+- `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
 
 ### Params
 
@@ -90,19 +91,20 @@ A param is drawn as a segmented control, kept in the link (`?width=20`), expande
   "map": { "query": "...", "id_field": "GEOID", "value_field": "v", "label": "...", "format": "pct", "ramp": ["#...", "..."] } }
 ```
 
-Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), every param token, and any token the app registers. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
+Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
 
 **Formats:** `int`, `num`, `num1`, `num2`, `compact`, `pct` (0–1), `pct100`, `usd`, `acres`, `km2`, `ha`, `meters`, `degC`, `tempC`, `per1k`, `ordinal`, `text`. A NULL or NaN shows as `format.nodata`; bar charts leave it out rather than drawing zero.
 
 ### Chart types
 
-- `bar` (default): grouped or stacked horizontal bars; `pivot` builds rows from several one-row queries; `statewide_row` sets this area beside the region (and `reference_row` beside a published value).
+- `bar` (default): grouped or stacked horizontal bars; `label_lines: 2` wraps long row labels; `pivot` builds rows from several one-row queries; `statewide_row` sets this area beside the region (and `reference_row` beside a published value).
 - `percentile-strip`: one row per variable; a strip of every area's raw value with this area marked, the raw value, and its percentile rank among all areas of its type.
 
   ```json
   { "type": "percentile-strip", "title": "...", "query": "stats", "key": "variable", "label": "label", "value": "value",
     "format": "num1", "format_field": "fmt", "scale": "log", "scale_field": "scale",
-    "rank_field": "pct", "rank_scale": 1, "direction_field": "dir", "peer_label": "coastal ecoregions", "note": "..." }
+    "rank_field": "pct", "rank_scale": 1, "direction_field": "dir", "peer_label": "coastal ecoregions", "note": "...",
+    "label_lines": 2 }
   ```
 
   The rank is `rank_field` (0–100, times `rank_scale`; use 100 for a 0–1 `PERCENT_RANK`) when given, so the number on screen is the one in the exported SQL. Otherwise it is the mid-rank (share below plus half the ties), flipped where `direction_field` is negative. Without a distribution (a param value that was not precomputed) the row shows the raw value and says the rank is unavailable.
@@ -127,7 +129,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.1.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.1.1 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

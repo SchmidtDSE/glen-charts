@@ -4,7 +4,8 @@
  * a tract or hexagon choropleth driven by query results, isochrones and
  * drawn/uploaded shapes.
  *
- * app.boundary_style (optional): { fill, opacity, hover_opacity, line, line_opacity, selected }
+ * Boundary style (optional), app.boundary_style overridden per area type by boundary.style:
+ *   { fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }
  */
 
 import { fmt, escapeHtml } from './format.js';
@@ -129,7 +130,7 @@ export class MapView {
         m.addSource('jur', { type: 'vector', url: `pmtiles://${b.url}`, promoteId: b.id_prop });
         this._tokens = tokens;
         const filter = this._boundaryFilter();
-        const st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', ...this.app.boundary_style };
+        const st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, ...this.app.boundary_style, ...b.style };
         m.addLayer({
             id: 'jur-fill', type: 'fill', source: 'jur', 'source-layer': b.source_layer, filter,
             paint: {
@@ -144,7 +145,7 @@ export class MapView {
         m.addLayer({
             id: 'jur-selected', type: 'line', source: 'jur', 'source-layer': b.source_layer,
             filter: ['==', ['get', b.id_prop], '__none__'],
-            paint: { 'line-color': st.selected, 'line-width': 2.5 },
+            paint: { 'line-color': st.selected, 'line-width': st.selected_width, 'line-opacity': st.selected_opacity },
         });
         this._wire();
     }

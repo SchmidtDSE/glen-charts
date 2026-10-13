@@ -145,6 +145,8 @@ class Explorer {
         this.wireSearch();
         this.wireResize();
         if (!(await this.restoreFromHash())) await this.setMode(this.defaultMode());
+        // a link pasted into an open tab (writeHash uses replaceState, which fires no event)
+        window.addEventListener('hashchange', () => this.restoreFromHash());
     }
 
     defaultMode() {

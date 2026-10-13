@@ -58,7 +58,9 @@ export async function exportReport(o) {
         for (const name of usedQueries(theme)) {
             let rows = null, error = null;
             try { rows = await o.engine.run(theme, name, o.aoi); } catch (err) { error = err.message || String(err); }
-            queries.push({ name, n: ++n, sql: o.engine.sqlFor(theme, name, o.aoi), rows, error });
+            let sql;
+            try { sql = o.engine.sqlFor(theme, name, o.aoi); } catch (err) { sql = `-- ${err.message}`; }
+            queries.push({ name, n: ++n, sql, rows, error });
         }
         sections.push({ theme, card, queries });
     }

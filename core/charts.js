@@ -9,6 +9,7 @@
  *   compare       { field, label } — draw a statewide tick per row, matched on `category`
  *   sort          'desc' to sort rows by total
  *   limit         keep the first N rows
+ *   label_lines   wrap long row labels onto up to N lines (default 1: truncate)
  */
 
 import { fmt, fmtTick, escapeHtml, isMissing } from './format.js';
@@ -51,9 +52,12 @@ export function renderBarChart(container, spec, rows, stateRows) {
     }
 
     // draw at the container's real pixel width so text stays at its CSS size
-    const W = Math.max(300, Math.round(container.clientWidth || 480)), labelW = Math.min(spec.label_width || 150, Math.round(W * (spec.label_width ? 0.45 : 0.34))), valueW = 64, rowH = spec.stacked || series.length === 1 ? 24 : 12 * series.length + 12;
+    const W = Math.max(300, Math.round(container.clientWidth || 480)), labelW = Math.min(spec.label_width || 150, Math.round(W * (spec.label_width ? 0.45 : 0.34))), valueW = 64;
+    let rowH = spec.stacked || series.length === 1 ? 24 : 12 * series.length + 12;
     const barArea = W - labelW - valueW;
     const maxChars = Math.max(8, Math.floor((labelW - 10) / 6.4));   // ~6.4px per char at 11.5px
+    const lines = Math.max(1, spec.label_lines || 1);
+    if (lines > 1 && data.some(d => String(d.cat).length > maxChars)) rowH = Math.max(rowH, 13 * lines + 6);
     const top = 4, axisH = 18;
     const H = top + data.length * rowH + axisH;
 
@@ -81,10 +85,7 @@ export function renderBarChart(container, spec, rows, stateRows) {
 
     data.forEach((d, i) => {
         const y0 = top + i * rowH;
-        const lab = el('text', { x: labelW - 8, y: y0 + rowH / 2 + 4, 'text-anchor': 'end' });
-        lab.textContent = truncate(String(d.cat), maxChars);
-        if (String(d.cat).length > maxChars) lab.appendChild(titleEl(String(d.cat)));
-        svg.appendChild(lab);
+        svg.appendChild(rowLabel(String(d.cat), labelW - 8, y0 + rowH / 2, maxChars, lines));
 
         if (spec.stacked) {
             let acc = 0;
@@ -178,6 +179,28 @@ export function el(tag, attrs = {}) {
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
     return n;
 }
+/**
+ * A right-aligned row label centred on y: wrapped at spaces onto up to
+ * `lines` lines, the last one truncated with an ellipsis, and the full text
+ * as a tooltip when anything was cut.
+ */
+export function rowLabel(text, x, y, maxChars, lines = 1) {
+    const out = [];
+    let rest = text.trim();
+    while (rest && out.length < lines) {
+        if (rest.length <= maxChars) { out.push(rest); rest = ''; break; }
+        if (out.length === lines - 1) { out.push(rest.slice(0, maxChars - 1) + '…'); rest = '…'; break; }
+        let cut = rest.lastIndexOf(' ', maxChars);
+        if (cut <= 0) cut = maxChars;
+        out.push(rest.slice(0, cut).trimEnd());
+        rest = rest.slice(cut).trimStart();
+    }
+    const lab = el('text', { x, y: y + 4 - (out.length - 1) * 6.5, 'text-anchor': 'end' });
+    if (out.length === 1) lab.textContent = out[0];
+    else out.forEach((t, i) => { const ts = el('tspan', { x, dy: i ? 13 : 0 }); ts.textContent = t; lab.appendChild(ts); });
+    if (rest) lab.appendChild(titleEl(text));
+    return lab;
+}
+
 export function titleEl(text) { const t = el('title'); t.textContent = text; return t; }
 const sum = a => a.reduce((s, v) => s + (v ?? 0), 0);
-const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
