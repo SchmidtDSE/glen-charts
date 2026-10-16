@@ -17,7 +17,7 @@
  * app.json:
  *   "leaderboard": {
  *     "jurisdiction": "ecoregion",                 area type (default: the first)
- *     "tab": "Leaderboard", "profile_tab": "Profile",
+ *     "tab": "Leaderboard", "profile_tab": "Profile", "default": true to land on it,
  *     "title", "intro" (HTML),
  *     "pillars": [{ "theme": "carbon", "query": "carbon", "weight": 1,
  *                   "variables": { "<variable>": { "weight": 0 to switch off by default, "reverse": true } } }],
@@ -308,7 +308,7 @@ export class Leaderboard {
         card.querySelector('.lb-note').textContent =
             `${spec.overall?.note || `${overallLabel}: weighted mean of the pillar scores.`}` +
             `${rows.some(r => r.partial && r.inView) ? ' * Some pillars have no data here; the overall score uses those present.' : ''}` +
-            ' Click a name to see it on the map; › opens its profile.';
+            ` Click a name to see it on the map; › opens its ${(spec.profile_tab || 'profile').toLowerCase()}.`;
         this.byId = new Map(rows.map(r => [r.id, r]));
         this.drawRows();
     }
@@ -339,7 +339,7 @@ export class Leaderboard {
                 <td class="num overall"><b>${fmt(r.overall, 'num1')}</b>${r.partial && r.overall !== null ? '*' : ''}</td>
                 ${pillars.map(p => bar(r.pillars[p.theme.id], p.color)).join('')}
                 ${sc ? shareCell(r, sc) : ''}
-                <td class="open"><button type="button" class="lb-open" title="Open this ${escapeHtml((this.jur.singular || 'area').toLowerCase())}'s profile">›</button></td>
+                <td class="open"><button type="button" class="lb-open" title="Open ${escapeHtml((this.spec.profile_tab || 'profile').toLowerCase())}">›</button></td>
             </tr>`).join('');
         card.querySelector('.lb-count').textContent = shown.length === this.result.inView ? '' : `${shown.length} of ${this.result.inView}`;
         card.querySelectorAll('th').forEach(th => {
@@ -572,7 +572,7 @@ export const leaderboardCss = `
 .lb-w { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .lb-w input { width: 110px; accent-color: var(--c, var(--primary)); }
 .lb-w output { font-size: 12px; color: var(--text-2); width: 3.2em; font-variant-numeric: tabular-nums; }
-.lb-rev { border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 999px; font-size: 11.5px; padding: 1px 8px; cursor: pointer; flex: 0 0 auto; min-width: 2.4em; }
+.lb-rev { border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 999px; font-size: 11.5px; padding: 1px 6px; cursor: pointer; flex: 0 0 auto; width: 7.2em; text-align: center; white-space: nowrap; }
 .lb-rev[aria-pressed="true"] { background: #fff4e5; border-color: #d97706; color: #92400e; }
 .lb-scoring-foot { border-top: 1px solid var(--line); padding-top: 6px; display: flex; justify-content: flex-end; }
 .lb-card { padding: 10px 0 8px; }

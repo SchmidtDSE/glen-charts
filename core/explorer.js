@@ -151,9 +151,15 @@ class Explorer {
         this.renderViewTabs();
         this.wireSearch();
         this.wireResize();
-        if (!(await this.restoreFromHash())) await this.setMode(this.defaultMode());
+        if (!(await this.restoreFromHash())) await this.landing();
         // a link pasted into an open tab (writeHash uses replaceState, which fires no event)
         window.addEventListener('hashchange', () => this.restoreFromHash());
+    }
+
+    /** The view with no link: the leaderboard when app.leaderboard.default, else the default mode's profile. */
+    async landing() {
+        await this.setMode(this.defaultMode());
+        if (this.config.app.leaderboard?.default) await this.setView('leaderboard');
     }
 
     defaultMode() {
@@ -737,7 +743,7 @@ class Explorer {
         const [modeId, featId] = path.split('/');
         const source = this.ext.sources.find(x => x.id === modeId);
         if (!modeId && q.get('view') === 'leaderboard' && this.config.app.leaderboard) { await this.setView('leaderboard', { lbState: q.get('score') || '' }); return true; }
-        if (!modeId || (source && source.hashable === false)) { await this.setMode(this.defaultMode()); return true; }
+        if (!modeId || (source && source.hashable === false)) { await this.landing(); return true; }
         if (!this.modes().some(m => m.id === modeId)) { await this.setMode(this.defaultMode()); return true; }
         await this.setMode(modeId, { keepFeature: !!featId });
         if (featId) this.pickById(decodeURIComponent(featId));
