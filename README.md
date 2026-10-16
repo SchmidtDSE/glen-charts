@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.1**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.2**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,17 +16,21 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.1/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.2/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.1/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.2/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
 
 The page also loads MapLibre GL and PMTiles (see `example/index.html`). All fetches are relative to the page, so an app can be served from any path, including behind an auth proxy.
+
+## Theming
+
+The page's own stylesheet can override the palette tokens on `:root` (see the top of `core/style.css`): `--primary`, `--accent`, `--chrome-bg`, `--card-bg`, `--surface`, `--backdrop`, `--text`, `--text-2`, `--text-3`, `--line`, `--line-strong`, `--hover`, `--grid`, and for a dark theme also `--header-bg`, `--header-fg`, `--overlay-bg` (map legends), `--code-bg`, `--skeleton-a` / `--skeleton-b`, `--mix-base` (the base colour tints are mixed with, white by default) and `--on-primary` (text on primary-coloured buttons). `--header-h` sets the header height. Nothing in the library hard-codes a light surface colour, so a dark palette needs no other overrides.
 
 ## config/app.json
 
@@ -37,6 +41,7 @@ The page also loads MapLibre GL and PMTiles (see `example/index.html`). All fetc
 | `mcp_url` | the duckdb-geo MCP server. A `config.json` next to the page with `mcp_server_url` overrides it at run time |
 | `engine` / `wasm` | `"mcp"` (default) or `"wasm"`; `wasm` holds the DuckDB-wasm options (see `core/wasm.js`) |
 | `view` | initial map `{ center, zoom }` |
+| `basemap` | `"light-gray"` (default), `"dark-gray"`, `"natgeo"`, or `{ tiles, attribution, ref_tiles? }`; `ref_tiles` is a label layer drawn above the data |
 | `overview`, `themes` | theme folder names (or paths) under `config/themes/`; the overview card is always shown, the themes are toggled |
 | `jurisdictions` | area types; see below |
 | `statewide` | optional whole region: `{ aoi, aoi10, label, kind_label?, description?, selectable? }`. Gives a region mode (unless `selectable: false`) and "California: …" comparisons on every tile and a tick on bar charts |
@@ -155,7 +160,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.1 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.2 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

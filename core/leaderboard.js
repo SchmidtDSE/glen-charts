@@ -573,7 +573,7 @@ export const leaderboardCss = `
 .lb-w input { width: 110px; accent-color: var(--c, var(--primary)); }
 .lb-w output { font-size: 12px; color: var(--text-2); width: 3.2em; font-variant-numeric: tabular-nums; }
 .lb-rev { border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 999px; font-size: 11.5px; padding: 1px 6px; cursor: pointer; flex: 0 0 auto; width: 7.2em; text-align: center; white-space: nowrap; }
-.lb-rev[aria-pressed="true"] { background: #fff4e5; border-color: #d97706; color: #92400e; }
+.lb-rev[aria-pressed="true"] { background: color-mix(in srgb, #d97706 14%, var(--mix-base, white)); border-color: #d97706; color: var(--rev-fg, #92400e); }
 .lb-scoring-foot { border-top: 1px solid var(--line); padding-top: 6px; display: flex; justify-content: flex-end; }
 .lb-card { padding: 10px 0 8px; }
 .lb-card > .err, .lb-card > .lb-note { margin: 4px 14px; }
@@ -595,7 +595,7 @@ export const leaderboardCss = `
 .lb-table th:last-child, .lb-table td:last-child { padding-right: 10px; }
 .lb-table td { padding: 4px 5px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .lb-table tbody tr:hover { background: var(--primary-wash); }
-.lb-table tbody tr.focus { background: color-mix(in srgb, #c2410c 12%, white); box-shadow: inset 3px 0 0 #c2410c; }
+.lb-table tbody tr.focus { background: color-mix(in srgb, #c2410c 16%, var(--mix-base, white)); box-shadow: inset 3px 0 0 #c2410c; }
 .lb-table .num { text-align: right; }
 .lb-table td.rank { color: var(--text-3); width: 1%; }
 .lb-table td.delta { width: 1%; font-size: 11px; white-space: nowrap; }
@@ -611,7 +611,7 @@ export const leaderboardCss = `
 .lb-table td.bar .v { display: inline-block; min-width: 2.2em; }
 .lb-table td.share { white-space: nowrap; color: var(--text-3); }
 .lb-table td.share.on { color: var(--text); }
-.lb-table td.share .badge { color: #1f5f8b; font-size: 9px; margin-right: 4px; vertical-align: 1px; }
+.lb-table td.share .badge { color: var(--badge, #1f5f8b); font-size: 9px; margin-right: 4px; vertical-align: 1px; }
 .lb-open { border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; color: var(--text-2); }
-.lb-open:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+.lb-open:hover { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 `;

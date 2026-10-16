@@ -11,26 +11,47 @@
 import { fmt, escapeHtml } from './format.js';
 import { hover } from './charts.js';
 
-const BASE_STYLE = {
-    version: 8,
-    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
-    sources: {
-        base: {
-            type: 'raster', tileSize: 256, maxzoom: 16,
-            tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
-            attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
-        },
-        ref: {
-            type: 'raster', tileSize: 256, maxzoom: 16,
-            tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
-        },
+const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services';
+
+/**
+ * Basemaps (app.json "basemap"): a name below, or { tiles, attribution, ref_tiles? }.
+ * `ref_tiles` is a label overlay drawn above the data layers; without one,
+ * labels are part of the base tiles and the data layers sit on top of them.
+ */
+const BASEMAPS = {
+    'light-gray': {
+        tiles: `${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+        ref_tiles: `${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+        attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
     },
-    layers: [
-        { id: 'base', type: 'raster', source: 'base' },
-        // data layers are inserted below 'ref' so place labels stay on top
-        { id: 'ref', type: 'raster', source: 'ref' },
-    ],
+    'dark-gray': {
+        tiles: `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+        ref_tiles: `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+        attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+    },
+    natgeo: {
+        tiles: `${ESRI}/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}`,
+        attribution: 'Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA',
+    },
 };
+
+function baseStyle(basemap = 'light-gray') {
+    const b = typeof basemap === 'object' ? basemap : (BASEMAPS[basemap] || BASEMAPS['light-gray']);
+    const sources = { base: { type: 'raster', tileSize: 256, maxzoom: 16, tiles: [b.tiles], attribution: b.attribution || '' } };
+    if (b.ref_tiles) sources.ref = { type: 'raster', tileSize: 256, maxzoom: 16, tiles: [b.ref_tiles] };
+    return {
+        version: 8,
+        glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+        sources,
+        layers: [
+            { id: 'base', type: 'raster', source: 'base' },
+            // data layers are inserted below 'ref' so place labels stay on top;
+            // with no label overlay, 'ref' is an invisible anchor
+            b.ref_tiles ? { id: 'ref', type: 'raster', source: 'ref' }
+                : { id: 'ref', type: 'background', paint: { 'background-opacity': 0 } },
+        ],
+    };
+}
 
 export class MapView {
     constructor(containerId, app) {
@@ -39,7 +60,7 @@ export class MapView {
         maplibregl.addProtocol('pmtiles', protocol.tile);
         this.map = new maplibregl.Map({
             container: containerId,
-            style: BASE_STYLE,
+            style: baseStyle(app.basemap),
             center: app.view.center,
             zoom: app.view.zoom,
             attributionControl: { compact: true },

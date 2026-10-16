@@ -27,6 +27,14 @@
     --series-state: #2b2b2b;
     --grid: rgba(0, 0, 0, 0.08);
 
+    --overlay-bg: rgba(255, 255, 255, .94);   /* map legends and chips */
+    --code-bg: #f3f4f2;
+    --skeleton-a: #eef2ec;
+    --skeleton-b: #f6f9f4;
+    --mix-base: white;                         /* tints: color-mix(<colour> 10%, var(--mix-base)) */
+    --on-primary: #fff;                        /* text on --primary and on series colours */
+    --header-bg: var(--primary);
+    --header-fg: #fff;
     --sidebar-width: 50vw;
     --header-h: 52px;
     font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -45,8 +53,8 @@ button, input { font: inherit; color: inherit; }
     height: var(--header-h);
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 16px;
-    background: var(--primary);
-    color: #fff;
+    background: var(--header-bg);
+    color: var(--header-fg);
 }
 .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .brand h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; white-space: nowrap; }
@@ -55,7 +63,7 @@ button, input { font: inherit; color: inherit; }
     width: 14px; height: 14px; align-self: center; border-radius: 3px;
     background: linear-gradient(135deg, #8fd694, #39b54a);
 }
-.header-links a { color: #fff; opacity: .85; text-decoration: none; font-size: 13px; }
+.header-links a { color: inherit; opacity: .85; text-decoration: none; font-size: 13px; }
 .header-links a:hover { opacity: 1; text-decoration: underline; }
 
 /* ----- layout ---------------------------------------------------------- */
@@ -99,7 +107,7 @@ button, input { font: inherit; color: inherit; }
 .step-num {
     display: inline-grid; place-items: center;
     width: 17px; height: 17px; border-radius: 50%;
-    background: var(--primary); color: #fff; font-size: 10px; letter-spacing: 0;
+    background: var(--primary); color: var(--on-primary); font-size: 10px; letter-spacing: 0;
 }
 .step.pending .step-num { background: var(--text-3); }
 .step.pending .step-label { opacity: .7; }
@@ -115,13 +123,13 @@ button, input { font: inherit; color: inherit; }
 }
 .seg button:hover, .chips button:hover { background: var(--primary-wash); }
 .seg button[aria-checked="true"] {
-    background: var(--primary); color: #fff; border-color: var(--primary);
+    background: var(--primary); color: var(--on-primary); border-color: var(--primary);
 }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { display: inline-flex; align-items: center; gap: 6px; }
 .chips button .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); opacity: .35; }
 .chips button[aria-pressed="true"] {
-    border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, white); font-weight: 600;
+    border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, var(--mix-base)); font-weight: 600;
 }
 .chips button[aria-pressed="true"] .dot { opacity: 1; }
 
@@ -200,11 +208,11 @@ button, input { font: inherit; color: inherit; }
 details.method { margin-top: 10px; font-size: 12px; color: var(--text-2); }
 details.method summary { cursor: pointer; color: var(--text-3); }
 details.method pre {
-    background: #f3f4f2; padding: 8px; border-radius: 6px; overflow-x: auto;
+    background: var(--code-bg); padding: 8px; border-radius: 6px; overflow-x: auto;
     font-size: 11px; line-height: 1.35; max-height: 260px;
 }
 
-.skeleton { background: linear-gradient(90deg, #eef2ec 25%, #f6f9f4 50%, #eef2ec 75%); background-size: 200% 100%;
+.skeleton { background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%); background-size: 200% 100%;
     animation: shimmer 1.2s infinite; border-radius: 6px; color: transparent !important; }
 .skeleton * { visibility: hidden; }
 @keyframes shimmer { to { background-position: -200% 0; } }
@@ -214,12 +222,12 @@ details.method pre {
     border: 1px solid var(--line-strong); background: var(--card-bg); color: var(--text-2);
     border-radius: 999px; font-size: 12px; padding: 3px 9px; cursor: pointer; white-space: nowrap;
 }
-.map-btn[aria-pressed="true"] { background: var(--c); color: #fff; border-color: var(--c); }
+.map-btn[aria-pressed="true"] { background: var(--c); color: var(--on-primary); border-color: var(--c); }
 
 /* ----- map overlays ---------------------------------------------------- */
 .map-overlay {
     position: absolute; z-index: 5;
-    background: rgba(255, 255, 255, .94); border: 1px solid var(--line);
+    background: var(--overlay-bg); border: 1px solid var(--line);
     border-radius: 8px; box-shadow: 0 2px 8px var(--shadow);
 }
 #map-chips { top: 10px; left: 10px; padding: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; max-width: calc(100% - 70px); }
@@ -227,7 +235,7 @@ details.method pre {
 #map-legend { left: 10px; bottom: 28px; padding: 8px 10px; font-size: 12px; max-width: 260px; }
 .map-legends { left: 10px; bottom: 28px; padding: 0; font-size: 12px; max-width: 260px; background: none; border: 0; box-shadow: none; display: flex; flex-direction: column; gap: 6px; }
 .map-legends:not(:has(> :not([hidden]))) { display: none; }
-.map-legends > div { position: static; padding: 8px 10px; background: rgba(255, 255, 255, .94); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px var(--shadow); }
+.map-legends > div { position: static; padding: 8px 10px; background: var(--overlay-bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px var(--shadow); }
 .map-legends #map-legend { left: auto; bottom: auto; }
 #overlay-legend .title { font-weight: 600; }
 #overlay-legend .lg-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--text-2); }

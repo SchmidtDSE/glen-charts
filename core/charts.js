@@ -105,7 +105,7 @@ export function renderBarChart(container, spec, rows, stateRows) {
             } else if (segs.length) {
                 // label the first (leading) segment instead of a meaningless 100% total
                 const s0 = segs[0];
-                const vt = el('text', { x: x(s0.v) + 5, y: y0 + rowH / 2 + 4, class: 'val', 'paint-order': 'stroke', stroke: 'white', 'stroke-width': 3 });
+                const vt = el('text', { x: x(s0.v) + 5, y: y0 + rowH / 2 + 4, class: 'val', 'paint-order': 'stroke', style: 'stroke: var(--card-bg, #fff)', 'stroke-width': 3 });
                 vt.textContent = fmt(s0.v, spec.format);
                 svg.appendChild(vt);
             }

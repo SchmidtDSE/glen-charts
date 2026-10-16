@@ -111,7 +111,7 @@ export const percentileStrip = {
     css: `
 .pstrip .pstrip-track { stroke: var(--grid, rgba(0,0,0,.08)); stroke-width: 1; }
 .pstrip .pstrip-peer { stroke: var(--text-3, #77706b); stroke-opacity: .35; stroke-width: 1; }
-.pstrip .pstrip-me { fill: var(--c, var(--primary, #006837)); stroke: #fff; stroke-width: 2; }
+.pstrip .pstrip-me { fill: var(--c, var(--primary, #006837)); stroke: var(--card-bg, #fff); stroke-width: 2; }
 .pstrip .pstrip-rank { font-size: 10.5px; fill: var(--text-3, #77706b); }
 `,
 };
