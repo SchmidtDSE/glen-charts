@@ -24,11 +24,15 @@
  * labels { area, sections, place_hint, map_chips }, statewide { label, kind_label,
  * description, selectable (false: comparisons only, not an area to pick) }, reference
  * { values, label, chart_label, title, citation, url, note }, project_url,
- * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id.
+ * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, leaderboard
+ * (core/leaderboard.js: a second tab ranking every area of one type).
+ * An area type with "picker": "map" is chosen by clicking the map only: the
+ * search box gives way to labels.place_hint.
  */
 
 import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, paramKey, paramTokens } from './engine.js';
-import { MapView, renderLegend } from './map.js';
+import { MapView, renderLegend, quantileBreaks } from './map.js';
+import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
 import { wireExportButton } from './export.js';
 import { escapeHtml, setFormatOptions } from './format.js';
@@ -106,7 +110,9 @@ class Explorer {
             params: {},
             mapTheme: null,
             token: 0,
+            view: 'profile',    // 'profile' | 'leaderboard'
         };
+        this.lb = null;
         this.charts = { ...builtinCharts, ...ext.charts };
     }
 
@@ -142,6 +148,7 @@ class Explorer {
         this.renderModeButtons();
         this.renderParams();
         this.renderThemeButtons();
+        this.renderViewTabs();
         this.wireSearch();
         this.wireResize();
         if (!(await this.restoreFromHash())) await this.setMode(this.defaultMode());
@@ -158,7 +165,7 @@ class Explorer {
     }
 
     installCss() {
-        const css = Object.values(this.charts).map(c => c.css || '').join('\n');
+        const css = Object.values(this.charts).map(c => c.css || '').join('\n') + (this.config.app.leaderboard ? leaderboardCss : '');
         if (!css.trim()) return;
         const s = document.createElement('style');
         s.textContent = css;
@@ -269,6 +276,7 @@ class Explorer {
                 this.$('#place-input').placeholder = `Search ${s.features.length} ${s.jur.label.toLowerCase()}…`;
             } catch (err) { console.error(err); }
         }
+        if (s.view === 'leaderboard' && this.lb) this.lb.load(s.params, this.paramNote());
         const a = this.state.aoi;
         if (!a) { this.writeHash(); return; }
         if (a.kind === 'state') this.setAoi(statewideAoi(this.config.app, this.state.params));
@@ -295,8 +303,18 @@ class Explorer {
 
     markMode(id) {
         this.el.querySelectorAll('#jur-buttons button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.id === id)));
-        const isJur = this.config.app.jurisdictions.some(j => j.id === id);
-        this.$('#step-place').hidden = !isJur;
+        const jur = this.config.app.jurisdictions.find(j => j.id === id);
+        this.$('#step-place').hidden = !jur;
+        const byMap = jur?.picker === 'map';
+        this.$('#step-place .search').hidden = byMap;
+        let hint = this.$('#step-place .pick-hint');
+        if (byMap && !hint) {
+            hint = document.createElement('div');
+            hint.className = 'pick-hint';
+            this.$('#step-place .search').after(hint);
+        }
+        if (hint) { hint.hidden = !byMap; this.syncPickHint(); }
+        if (this.state.view === 'leaderboard') this.$('#step-place').hidden = true;
         this.el.querySelectorAll('#source-steps [data-source]').forEach(s => { s.hidden = s.dataset.source !== id; });
     }
 
@@ -340,7 +358,8 @@ class Explorer {
         }
         await this.mapView.showJurisdiction(jur, paramTokens(this.config.app, s.params));
         const sing = (jur.singular || jur.label).toLowerCase();
-        this.showHint(this.config.app.labels?.place_hint || `Click ${/^[aeiou]/i.test(sing) ? 'an' : 'a'} ${sing} on the map, or search by name`);
+        if (this.state.view === 'leaderboard') this.hideHint();
+        else this.showHint(this.config.app.labels?.place_hint || `Click ${/^[aeiou]/i.test(sing) ? 'an' : 'a'} ${sing} on the map, or search by name`);
         try {
             s.features = (await this.engine.listFeatures(jur, s.params)).slice();
             s.features.sort((a, b) => naturalCompare(a.name, b.name));
@@ -411,8 +430,15 @@ class Explorer {
     pick(feature) {
         const s = this.state;
         if (!feature || !s.jur) return;
+        if (s.view === 'leaderboard' && this.lb) {
+            // a map click on the leaderboard finds the row; the profile opens from the row
+            this.lb.focus(feature.id);
+            this.mapView.select(feature.id);
+            return;
+        }
         s.feature = feature;
         this.$('#place-input').value = feature.name;
+        this.syncPickHint();
         this.hideHint();
         const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(feature[k]));
         this.mapView.select(feature.id, bbox);
@@ -425,8 +451,115 @@ class Explorer {
         this.state.aoi = aoi;
         this.state.token++;
         this.writeHash();
+        if (this.state.view === 'leaderboard') return;
         if (aoi) this.renderReport();
         else this.renderIntro();
+    }
+
+    syncPickHint() {
+        const h = this.$('#step-place .pick-hint');
+        if (!h) return;
+        const f = this.state.feature;
+        const text = this.config.app.labels?.place_hint || 'Click the map to choose an area';
+        h.innerHTML = f ? `<b>${escapeHtml(f.name)}</b> · ${escapeHtml(text)} to choose another` : escapeHtml(text);
+    }
+
+    /* ---------------------------------------------------------- leaderboard */
+
+    renderViewTabs() {
+        const spec = this.config.app.leaderboard;
+        if (!spec) return;
+        const nav = document.createElement('nav');
+        nav.className = 'view-tabs';
+        nav.setAttribute('role', 'tablist');
+        nav.innerHTML = `<button type="button" role="tab" data-view="profile">${escapeHtml(spec.profile_tab || 'Profile')}</button>` +
+            `<button type="button" role="tab" data-view="leaderboard">${escapeHtml(spec.tab || 'Leaderboard')}</button>`;
+        nav.querySelectorAll('button').forEach(b => { b.onclick = () => this.setView(b.dataset.view); });
+        this.$('#controls').before(nav);
+        this.markView();
+    }
+
+    markView() {
+        const v = this.state.view;
+        this.el.querySelectorAll('.view-tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === v)));
+        const lb = v === 'leaderboard';
+        for (const sel of ['#step-jur', '#step-themes', '#source-steps']) {
+            const n = this.$(sel);
+            if (lb) { n.dataset.lbHidden = n.hidden ? '1' : ''; n.hidden = true; }
+            else if (n.dataset.lbHidden !== undefined) { n.hidden = n.dataset.lbHidden === '1'; delete n.dataset.lbHidden; }
+        }
+        if (lb) this.$('#step-place').hidden = true;
+        else this.markMode(this.state.mode);
+        if (!lb) {
+            // the mode step hides itself when there is a single mode
+            this.$('#step-jur').hidden = this.modes().length <= 1;
+            this.$('#step-themes').hidden = this.config.themes.length <= 1;
+        }
+    }
+
+    leaderboardJur() {
+        const spec = this.config.app.leaderboard;
+        return this.config.app.jurisdictions.find(j => j.id === spec.jurisdiction) || this.config.app.jurisdictions[0];
+    }
+
+    async setView(view, { lbState = null } = {}) {
+        const spec = this.config.app.leaderboard;
+        if (!spec || (view !== 'profile' && view !== 'leaderboard')) view = 'profile';
+        const s = this.state;
+        s.view = view;
+        this.markView();
+        if (view === 'leaderboard') {
+            const jur = this.leaderboardJur();
+            if (s.mode !== jur.id) await this.setMode(jur.id, { keepFeature: true });
+            this.hideHint();
+            this.mapView.clearChoropleth();
+            this.$('#map-chips').hidden = true;
+            if (!this.lb) {
+                this.lb = new Leaderboard(this.$('#report'), {
+                    engine: this.engine, spec, jur,
+                    onShow: f => {
+                        const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k]));
+                        this.mapView.select(f.id, bbox);
+                    },
+                    onOpen: f => { this.setView('profile').then(() => this.pick(f)); },
+                    onHover: id => this.mapView.highlight(id),
+                    onScores: res => this.colorByScore(res),
+                    onChange: () => this.writeHash(),
+                });
+                this.mapView.popupExtra = id => (this.state.view === 'leaderboard' ? this.lb.popupFor(id) : '');
+            }
+            if (lbState === null && this.pendingScore != null) { lbState = this.pendingScore; this.pendingScore = null; }
+            if (lbState !== null) this.lb.setStateString(lbState);
+            this.lb.el = this.$('#report');
+            this.mapView.clearSelection();
+            await this.lb.load(s.params, this.paramNote());
+        } else {
+            this.mapView.setJurisdictionColors(null);
+            this.$('#map-legend').hidden = true;
+            if (s.feature) this.mapView.select(s.feature.id); else this.mapView.clearSelection();
+            if (s.aoi) this.renderReport(); else this.renderIntro();
+        }
+        this.writeHash();
+    }
+
+    paramNote() {
+        const app = this.config.app;
+        return app.params.map(p => {
+            const o = p.options.find(x => String(optionValue(x)) === String(this.state.params[p.id]));
+            return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
+        }).filter(Boolean).join(' · ');
+    }
+
+    colorByScore(res) {
+        const spec = this.config.app.leaderboard;
+        const legend = this.$('#map-legend');
+        if (!spec.map || this.state.view !== 'leaderboard') return;
+        const ramp = spec.map.ramp || ['#f7fcb9', '#c2e699', '#78c679', '#31a354', '#006837'];
+        const vals = res.rows.filter(r => r.inView && r.overall !== null);
+        const breaks = quantileBreaks(vals.map(r => r.overall), ramp.length);
+        const colorOf = v => ramp[Math.min(ramp.length - 1, breaks.filter(b => v >= b).length)];
+        this.mapView.setJurisdictionColors(new Map(vals.map(r => [r.id, colorOf(r.overall)])));
+        renderLegend(legend, { label: spec.map.label || 'Overall score', format: 'num1', note: spec.map.note || 'Quantile classes among the areas in view' }, { breaks, ramp });
     }
 
     kindLabel() {
@@ -575,7 +708,10 @@ class Explorer {
         if (s.themes.size !== this.config.themes.length) q.set('themes', this.orderedThemes().map(t => t.id).join(','));
         if (s.mapTheme && this.config.themes.some(t => t.map)) q.set('map', s.mapTheme);
         for (const p of app.params) if (String(s.params[p.id]) !== String(p.default ?? optionValue(p.options[0]))) q.set(p.id, s.params[p.id]);
-        const hash = '#' + parts.join('/') + (q.toString() ? '?' + q.toString().replace(/%2C/g, ',') : '');
+        if (s.view === 'leaderboard') q.set('view', 'leaderboard');
+        const lbs = this.lb?.stateString();
+        if (lbs) q.set('score', lbs);
+        const hash = '#' + parts.join('/') + (q.toString() ? '?' + q.toString().replace(/%2C/g, ',').replace(/%3B/g, ';').replace(/%3D/g, '=') : '');
         history.replaceState(null, '', hash === '#' ? location.pathname + location.search : hash);
     }
 
@@ -600,10 +736,15 @@ class Explorer {
         this.markParams();
         const [modeId, featId] = path.split('/');
         const source = this.ext.sources.find(x => x.id === modeId);
+        if (!modeId && q.get('view') === 'leaderboard' && this.config.app.leaderboard) { await this.setView('leaderboard', { lbState: q.get('score') || '' }); return true; }
         if (!modeId || (source && source.hashable === false)) { await this.setMode(this.defaultMode()); return true; }
         if (!this.modes().some(m => m.id === modeId)) { await this.setMode(this.defaultMode()); return true; }
         await this.setMode(modeId, { keepFeature: !!featId });
         if (featId) this.pickById(decodeURIComponent(featId));
+        if (this.config.app.leaderboard && (q.get('view') === 'leaderboard' || q.has('score'))) {
+            if (q.get('view') === 'leaderboard') await this.setView('leaderboard', { lbState: q.get('score') || '' });
+            else { this.pendingScore = q.get('score'); }
+        }
         return true;
     }
 

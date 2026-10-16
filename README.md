@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.1.1**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.1/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.0/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.1.1/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.0/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -68,6 +68,7 @@ An area type:
 - `list_params: true` when the list depends on a param (areas that exist only at some settings); it is then re-read when the param changes.
 - The boundary `filter` may contain param tokens (`"{{WIDTH}}"`, filled as a number when numeric) and follows the param.
 - `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
+- `picker: "map"` chooses areas by clicking the map only: the search box gives way to `labels.place_hint` (e.g. "Click a coastline on the map").
 
 ### Params
 
@@ -109,6 +110,30 @@ Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{A
 
   The rank is `rank_field` (0–100, times `rank_scale`; use 100 for a 0–1 `PERCENT_RANK`) when given, so the number on screen is the one in the exported SQL. Otherwise it is the mid-rank (share below plus half the ties), flipped where `direction_field` is negative. Without a distribution (a param value that was not precomputed) the row shows the raw value and says the rank is unavailable.
 
+## Leaderboard
+
+`app.json` `leaderboard` adds a second tab that ranks every area of one type by a combined score the reader can re-weight. It reads only precomputed all-areas results (`precompute results`), so every theme it uses needs an `all` SQL file.
+
+```json
+"leaderboard": {
+  "jurisdiction": "ecoregion", "tab": "Leaderboard", "profile_tab": "Profile",
+  "title": "Coastal ecoregions, ranked", "intro": "<p>…</p>",
+  "pillars": [{ "theme": "carbon", "query": "carbon", "weight": 1,
+                "variables": { "irrecoverable_density": { "weight": 0 }, "fishing_effort": { "reverse": true } } }],
+  "overall": { "label": "Overall", "note": "…" },
+  "scope": { "theme": "priority", "query": "priority", "field": "priority_share", "min": 0.5,
+             "detail_field": "priority_countries", "label": "Priority countries", "global_label": "Global", "note": "…" },
+  "map": { "label": "Overall score", "ramp": ["#f7fcb9", "#c2e699", "#78c679", "#31a354", "#006837"] }
+}
+```
+
+- Each pillar query returns one row per (area, variable) with `variable`, `label`, `value` and `dir` (+1 when higher is better, −1 when lower is better).
+- Scoring runs in the browser. A variable's percentile is the mid-rank of `dir × value` among the areas in view (0–100, ties share the midpoint of their rank range); with every area in view it equals a SQL mid-rank `pct`. A pillar score is the weighted mean of its variables' percentiles; the overall score is the weighted mean of the pillar scores.
+- The scoring panel sets pillar weights and, per variable, on/off, weight and direction. Weights run from 0 to 3. `pillars[].weight` and `variables` set the defaults; a ± column shows each area's change in rank from them.
+- `scope` adds a Global / subset switch: the subset is the areas whose `field` (from the first row of that theme's results) is at least `min`. Percentiles are recomputed among the subset.
+- Names in the table show the area on the map; › opens its profile. Clicking the map finds the area's row. The map colours areas by overall score.
+- The view and any non-default scoring are kept in the URL (`?view=leaderboard&score=scope=priority;carbon=2;carbon.irrecoverable_mt=-1`), so a re-weighted view is a link. The CSV download records the scoring it used.
+
 ## Extensions
 
 What configuration cannot express, an app passes to `createExplorer({ extensions })` from its own module (`app/extensions.js`, also named in `app.json` `extensions` so the CLI gets its tokens):
@@ -129,7 +154,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.1.1 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

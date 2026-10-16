@@ -48,6 +48,7 @@ export class MapView {
         this.ready = new Promise(r => this.map.on('load', r));
         this.jur = null;
         this.onPick = () => {};
+        this.popupExtra = null;      // (id) → extra popup HTML for a boundary
         this._hoverId = null;
         this._popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
         this._choro = null;
@@ -130,7 +131,7 @@ export class MapView {
         m.addSource('jur', { type: 'vector', url: `pmtiles://${b.url}`, promoteId: b.id_prop });
         this._tokens = tokens;
         const filter = this._boundaryFilter();
-        const st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, ...this.app.boundary_style, ...b.style };
+        const st = this._st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, ...this.app.boundary_style, ...b.style };
         m.addLayer({
             id: 'jur-fill', type: 'fill', source: 'jur', 'source-layer': b.source_layer, filter,
             paint: {
@@ -167,6 +168,7 @@ export class MapView {
             let html = `<b>${escapeHtml(name)}</b>`;
             const t = this._tractAt(e.point);
             if (t) html += `<br>${escapeHtml(this._choro.label)}: ${fmt(t.value, this._choro.format)}`;
+            if (this.popupExtra) html += this.popupExtra(String(f.properties[this.jur.boundary.id_prop] ?? f.id)) || '';
             this._popup.setLngLat(e.lngLat).setHTML(html).addTo(m);
         });
         m.on('mouseleave', 'jur-fill', () => {
@@ -227,6 +229,50 @@ export class MapView {
         if (!this.jur?.boundary.filter) return;
         for (const id of ['jur-fill', 'jur-line']) if (this.map.getLayer(id)) this.map.setFilter(id, this._boundaryFilter());
         if (this.map.getLayer('jur-selected')) this.map.setFilter('jur-selected', this._selectedFilter());
+    }
+
+    /**
+     * Colour the boundaries themselves: colors is a Map id → colour (ids as
+     * strings, matched by value), or null to restore the plain style. Areas
+     * not in the map are left clear but stay clickable.
+     */
+    async setJurisdictionColors(colors) {
+        await this.ready;
+        const m = this.map;
+        if (!m.getLayer('jur-fill')) return;
+        const st = this._st;
+        if (!colors || !colors.size) {
+            m.setPaintProperty('jur-fill', 'fill-color', st.fill);
+            m.setPaintProperty('jur-fill', 'fill-opacity', ['case', ['boolean', ['feature-state', 'hover'], false], st.hover_opacity, st.opacity]);
+            m.setPaintProperty('jur-line', 'line-color', st.line);
+            m.setPaintProperty('jur-line', 'line-opacity', st.line_opacity);
+            m.setPaintProperty('jur-line', 'line-width', ['interpolate', ['linear'], ['zoom'], 5, 0.4, 10, 1.2]);
+            return;
+        }
+        const match = ['match', ['to-string', ['get', this.jur.boundary.id_prop]]];
+        for (const [id, c] of colors) match.push(String(id), c);
+        match.push('rgba(0,0,0,0)');
+        m.setPaintProperty('jur-fill', 'fill-color', match);
+        m.setPaintProperty('jur-fill', 'fill-opacity', ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0.82]);
+        // thin bands vanish at world zoom; a coloured outline keeps them visible
+        const line = match.slice();
+        line[line.length - 1] = st.line;
+        m.setPaintProperty('jur-line', 'line-color', line);
+        m.setPaintProperty('jur-line', 'line-opacity', 0.95);
+        m.setPaintProperty('jur-line', 'line-width', ['interpolate', ['linear'], ['zoom'], 1, 1.6, 5, 1.2, 10, 1.2]);
+    }
+
+    /** Hover-highlight one area from outside the map (e.g. a table row); null clears. */
+    highlight(id) {
+        const m = this.map;
+        if (!this.jur || !m.getSource('jur')) return;
+        const src = { source: 'jur', sourceLayer: this.jur.boundary.source_layer };
+        if (this._hoverId !== null) m.setFeatureState({ ...src, id: this._hoverId }, { hover: false });
+        this._hoverId = null;
+        if (id === null || id === undefined) return;
+        const fid = Number.isFinite(Number(id)) ? Number(id) : id;
+        this._hoverId = fid;
+        m.setFeatureState({ ...src, id: fid }, { hover: true });
     }
 
     clearSelection() {
@@ -381,7 +427,7 @@ Object.assign(MapView.prototype, {
 const num = v => (v !== '' && Number.isFinite(Number(v)) ? Number(v) : v);
 
 /** Interior quantile cut points (ramp.length − 1 of them), deduplicated. */
-function quantileBreaks(vals, k) {
+export function quantileBreaks(vals, k) {
     const s = [...vals].sort((a, b) => a - b);
     const out = [];
     for (let i = 1; i < k; i++) {
