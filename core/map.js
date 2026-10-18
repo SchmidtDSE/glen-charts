@@ -77,16 +77,17 @@ export class MapView {
 
     /**
      * A vector overlay below the boundaries and labels:
-     *   { id, url, source_layer, type = 'fill', paint, popup?(properties) → html }
-     * Its popup is suppressed where a boundary is under the pointer, so the
-     * boundary's own popup wins.
+     *   { id, url, source_layer, type = 'fill', paint, popup?(properties) → html, above? }
+     * `above: true` draws it on top of the boundaries instead, so it stays visible
+     * over leaderboard colours. Its popup is suppressed where a boundary is under
+     * the pointer either way, so the boundary's own popup wins.
      */
     async addOverlay(o) {
         await this.ready;
         const m = this.map;
         const src = `ov-${o.id}`, layer = `ov-${o.id}-${o.type || 'fill'}`;
         if (!m.getSource(src)) m.addSource(src, { type: 'vector', url: `pmtiles://${o.url}` });
-        m.addLayer({ id: layer, type: o.type || 'fill', source: src, 'source-layer': o.source_layer, paint: o.paint || {} }, 'ref');
+        m.addLayer({ id: layer, type: o.type || 'fill', source: src, 'source-layer': o.source_layer, paint: o.paint || {} }, o.above ? undefined : 'ref');
         (this._overlays ??= new Map()).set(o.id, layer);
         if (!o.popup) return;
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
