@@ -140,7 +140,9 @@ export class MapView {
     /**
      * jur.boundary.filter may hold param tokens ("{{WIDTH}}") anywhere in its
      * MapLibre expression; `tokens` ({ WIDTH: '10' }) fills them, as numbers
-     * when numeric. setBoundaryTokens() re-applies it when a param changes.
+     * when numeric. boundary.url and boundary.source_layer may hold tokens too,
+     * for areas drawn from one tile set per param value (e.g. one PMTiles per
+     * basin level). setBoundaryTokens() re-applies them when a param changes.
      */
     async showJurisdiction(jur, tokens = {}) {
         await this.ready;
@@ -149,23 +151,25 @@ export class MapView {
         if (m.getSource('jur')) m.removeSource('jur');
         this.jur = jur;
         const b = jur.boundary;
-        m.addSource('jur', { type: 'vector', url: `pmtiles://${b.url}`, promoteId: b.id_prop });
         this._tokens = tokens;
+        this._url = this._fillTokens(b.url);
+        this._srcLayer = this._fillTokens(b.source_layer);
+        m.addSource('jur', { type: 'vector', url: `pmtiles://${this._url}`, promoteId: b.id_prop });
         const filter = this._boundaryFilter();
         const st = this._st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, ...this.app.boundary_style, ...b.style };
         m.addLayer({
-            id: 'jur-fill', type: 'fill', source: 'jur', 'source-layer': b.source_layer, filter,
+            id: 'jur-fill', type: 'fill', source: 'jur', 'source-layer': this._srcLayer, filter,
             paint: {
                 'fill-color': st.fill,
                 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], st.hover_opacity, st.opacity],
             },
         }, 'ref');
         m.addLayer({
-            id: 'jur-line', type: 'line', source: 'jur', 'source-layer': b.source_layer, filter,
+            id: 'jur-line', type: 'line', source: 'jur', 'source-layer': this._srcLayer, filter,
             paint: { 'line-color': st.line, 'line-opacity': st.line_opacity, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.4, 10, 1.2] },
         }, 'ref');
         m.addLayer({
-            id: 'jur-selected', type: 'line', source: 'jur', 'source-layer': b.source_layer,
+            id: 'jur-selected', type: 'line', source: 'jur', 'source-layer': this._srcLayer,
             filter: ['==', ['get', b.id_prop], '__none__'],
             paint: { 'line-color': st.selected, 'line-width': st.selected_width, 'line-opacity': st.selected_opacity },
         });
@@ -181,10 +185,10 @@ export class MapView {
             if (!f || this._drawing) return;
             m.getCanvas().style.cursor = 'pointer';
             if (this._hoverId !== null && this._hoverId !== f.id) {
-                m.setFeatureState({ source: 'jur', sourceLayer: this.jur.boundary.source_layer, id: this._hoverId }, { hover: false });
+                m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: this._hoverId }, { hover: false });
             }
             this._hoverId = f.id;
-            m.setFeatureState({ source: 'jur', sourceLayer: this.jur.boundary.source_layer, id: f.id }, { hover: true });
+            m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: f.id }, { hover: true });
             const name = f.properties[this.jur.boundary.name_prop] ?? f.id;
             let html = `<b>${escapeHtml(name)}</b>`;
             const t = this._tractAt(e.point);
@@ -195,7 +199,7 @@ export class MapView {
         m.on('mouseleave', 'jur-fill', () => {
             m.getCanvas().style.cursor = '';
             if (this._hoverId !== null) {
-                m.setFeatureState({ source: 'jur', sourceLayer: this.jur.boundary.source_layer, id: this._hoverId }, { hover: false });
+                m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: this._hoverId }, { hover: false });
             }
             this._hoverId = null;
             this._popup.remove();
@@ -244,10 +248,27 @@ export class MapView {
         return b.filter ? ['all', this._boundaryFilter(), byId] : byId;
     }
 
-    /** New param tokens: re-filter the boundaries and the selected outline. */
-    setBoundaryTokens(tokens) {
+    _fillTokens(s) {
+        return typeof s === 'string' ? s.replace(/\{\{(\w+)\}\}/g, (m, k) => this._tokens?.[k] ?? m) : s;
+    }
+
+    /**
+     * New param tokens: re-filter the boundaries and the selected outline, or,
+     * when the tile set itself follows a param, reload it and re-apply the
+     * selection and any colours.
+     */
+    async setBoundaryTokens(tokens) {
         this._tokens = tokens;
-        if (!this.jur?.boundary.filter) return;
+        if (!this.jur) return;
+        const b = this.jur.boundary;
+        if (this._fillTokens(b.url) !== this._url || this._fillTokens(b.source_layer) !== this._srcLayer) {
+            this._hoverId = null;
+            await this.showJurisdiction(this.jur, tokens);
+            this.map.setFilter('jur-selected', this._selectedFilter());
+            if (this._colors) await this.setJurisdictionColors(this._colors);
+            return;
+        }
+        if (!b.filter) return;
         for (const id of ['jur-fill', 'jur-line']) if (this.map.getLayer(id)) this.map.setFilter(id, this._boundaryFilter());
         if (this.map.getLayer('jur-selected')) this.map.setFilter('jur-selected', this._selectedFilter());
     }
@@ -259,6 +280,7 @@ export class MapView {
      */
     async setJurisdictionColors(colors) {
         await this.ready;
+        this._colors = colors;
         const m = this.map;
         if (!m.getLayer('jur-fill')) return;
         const st = this._st;
@@ -287,7 +309,7 @@ export class MapView {
     highlight(id) {
         const m = this.map;
         if (!this.jur || !m.getSource('jur')) return;
-        const src = { source: 'jur', sourceLayer: this.jur.boundary.source_layer };
+        const src = { source: 'jur', sourceLayer: this._srcLayer };
         if (this._hoverId !== null) m.setFeatureState({ ...src, id: this._hoverId }, { hover: false });
         this._hoverId = null;
         if (id === null || id === undefined) return;

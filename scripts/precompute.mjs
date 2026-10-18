@@ -31,7 +31,8 @@
  *     --theme a,b        areas: re-run only these themes in files already written
  *     --param id=v       a param value; id=all for every option (default: each param's default)
  *     --force            areas: rewrite files already written
- *   env: MCP_URL overrides app.mcp_url.
+ *   env: MCP_URL overrides app.mcp_url; MCP_TIMEOUT_MS overrides the 300 s query timeout
+ *        (for a local query server running whole-catalog scans).
  *
  * An app's extensions module (app.json "extensions", e.g. "app/extensions.js")
  * is imported for its template tokens; its imports of glen-charts from
@@ -44,6 +45,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, Engine, statewideAoi, jurisdictionAoi, expand, paramKey, paramCombos, paramTokens, allFile } from '../core/engine.js';
 import { dataPaths, pathPrefix } from '../core/sources.js';
+import { McpQueryClient } from '../core/mcp.js';
 
 register('./resolve-cdn.mjs', import.meta.url);
 
@@ -74,7 +76,9 @@ if (app.extensions) {
     const mod = await import(pathToFileURL(resolve(root, app.extensions)).href);
     tokens = (mod.default || mod).tokens || {};
 }
-const engine = new Engine(config, { mcpUrl: process.env.MCP_URL || app.mcp_url, dataBase: null, tokens });
+const mcpUrl = process.env.MCP_URL || app.mcp_url;
+const client = process.env.MCP_TIMEOUT_MS ? new McpQueryClient(mcpUrl, { timeoutMs: Number(process.env.MCP_TIMEOUT_MS) }) : null;
+const engine = new Engine(config, { mcpUrl, client, dataBase: null, tokens });
 const combos = paramCombos(app, paramPick);
 const allThemes = [config.overview, ...config.themes].filter(Boolean);
 const secs = t0 => ((Date.now() - t0) / 1000).toFixed(1);

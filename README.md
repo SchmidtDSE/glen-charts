@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.2**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.3**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.2/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.3/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.2/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.3/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -55,6 +55,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
 | `extensions` | path of the app's extension module, for the precompute CLI |
 | `data_base` | folder holding `data/`, when a site variant shares another's |
+| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off |
 
 An area type:
 
@@ -72,6 +73,7 @@ An area type:
 - Ids match by value, so a numeric id in the tiles (`20001.0`) finds `20001` in the list.
 - `list_params: true` when the list depends on a param (areas that exist only at some settings); it is then re-read when the param changes.
 - The boundary `filter` may contain param tokens (`"{{WIDTH}}"`, filled as a number when numeric) and follows the param.
+- The boundary `url` and `source_layer` may contain param tokens too, for areas with one tile set per param value (`".../level_0{{LEVEL}}.pmtiles"`); the boundaries reload when the param changes, keeping the selection and leaderboard colours.
 - `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
 - `picker: "map"` chooses areas by clicking the map only: the search box gives way to `labels.place_hint` (e.g. "Click a coastline on the map").
 
@@ -81,7 +83,7 @@ An area type:
 "params": [{ "id": "width", "label": "Band width", "token": "WIDTH", "options": [5, 10, 20, 50], "default": 10, "format": "{} km" }]
 ```
 
-A param is drawn as a segmented control, kept in the link (`?width=20`), expanded as `{{WIDTH}}` in every SQL template (area, list and theme), and part of every cache key and precomputed file path. Its value is always one of its options, so it is safe in SQL. An option may be `{ "value": ..., "label": ... }`.
+A param is drawn as a segmented control (or, with `"control": "slider"`, as a slider over its options, for ordered settings such as a resolution), kept in the link (`?width=20`), expanded as `{{WIDTH}}` in every SQL template (area, list and theme), and part of every cache key and precomputed file path. Its value is always one of its options, so it is safe in SQL. An option may be `{ "value": ..., "label": ... }`.
 
 ## Themes
 
@@ -160,7 +162,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.2 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.3 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
@@ -174,7 +176,7 @@ npx github:SchmidtDSE/glen-charts#v0.2.2 precompute --site <app dir> <job> [args
 | `sources` | `data/sources.json`, the STAC records of every dataset the config reads, for the export's citations |
 | (none) | lists, statewide, peers, sources |
 
-`--param width=all` runs every option; `--param width=20` one; the default is each param's default. `MCP_URL` overrides `mcp_url`.
+`--param width=all` runs every option; `--param width=20` one; the default is each param's default. `MCP_URL` overrides `mcp_url`; `MCP_TIMEOUT_MS` overrides the 300 s query timeout (for a local query server running whole-catalog scans).
 
 The browser always looks for a precomputed file before running a query live, and both run the same SQL through the same engine, so a precomputed number is the live number.
 
