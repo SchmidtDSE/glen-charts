@@ -24,8 +24,10 @@
  * labels { area, sections, place_hint, map_chips }, statewide { label, kind_label,
  * description, selectable (false: comparisons only, not an area to pick) }, reference
  * { values, label, chart_label, title, citation, url, note }, project_url,
- * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, leaderboard
+ * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, overlays (as the
+ * extension overlays, with a declared popup; see installOverlays), leaderboard
  * (core/leaderboard.js: a second tab ranking every area of one type).
+ * A param with "control": "slider" is drawn as a slider over its options.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
  */
@@ -181,10 +183,23 @@ class Explorer {
     installOverlays() {
         const box = this.$('#overlay-legend');
         const parts = [];
-        for (const o of this.ext.overlays) {
-            this.mapView.addOverlay(o);
+        // app.json "overlays" take the same fields as extension overlays, except that
+        // the popup is declared: popup_title (a property) and popup_fields ([property]
+        // or [[property, label]]). "visible": false starts the layer switched off.
+        const fromConfig = o => ({
+            ...o,
+            popup: o.popup_title || o.popup_fields ? p => [
+                o.popup_title ? `<b>${escapeHtml(p[o.popup_title] ?? '')}</b>` : '',
+                ...(o.popup_fields || []).map(f => {
+                    const [k, label] = Array.isArray(f) ? f : [f, f];
+                    return p[k] === undefined || p[k] === null || p[k] === '' ? '' : `${escapeHtml(label)}: ${escapeHtml(p[k])}`;
+                }),
+            ].filter(Boolean).join('<br>') : undefined,
+        });
+        for (const o of [...(this.config.app.overlays || []).map(fromConfig), ...this.ext.overlays]) {
+            this.mapView.addOverlay(o).then(() => { if (o.visible === false) this.mapView.setOverlayVisible(o.id, false); });
             if (o.legend || o.toggle) {
-                parts.push(`<div class="ov" data-ov="${escapeHtml(o.id)}">${o.legend || ''}${o.toggle ? `<label class="lg-toggle"><input type="checkbox" checked> ${escapeHtml(o.toggle)}</label>` : ''}</div>`);
+                parts.push(`<div class="ov" data-ov="${escapeHtml(o.id)}">${o.legend || ''}${o.toggle ? `<label class="lg-toggle"><input type="checkbox"${o.visible === false ? '' : ' checked'}> ${escapeHtml(o.toggle)}</label>` : ''}</div>`);
             }
         }
         if (!parts.length) return;
@@ -251,14 +266,32 @@ class Explorer {
         const step = this.$('#step-params');
         if (!app.params.length) return;
         step.hidden = false;
+        // "control": "slider" draws the options as stops on a range input
+        // (ordered options such as a resolution); the default is buttons.
         step.innerHTML = app.params.map(p => `
             <div class="step-label">${escapeHtml(p.label || p.id)}</div>
+            ${p.control === 'slider' ? `
+            <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
+                <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
+                <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
+            </div>` : `
             <div class="seg" role="radiogroup" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
-            </div>
+            </div>`}
             ${p.help ? `<div class="step-help">${escapeHtml(p.help)}</div>` : ''}`).join('');
-        step.querySelectorAll('[data-param] button').forEach(b => {
+        step.querySelectorAll('.seg[data-param] button').forEach(b => {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
+        });
+        step.querySelectorAll('.param-slider').forEach(g => {
+            const p = app.params.find(x => x.id === g.dataset.param);
+            const input = g.querySelector('input');
+            const at = i => optionValue(p.options[Number(i)]);
+            // 'input' only moves the highlighted stop; the param changes on release
+            input.oninput = () => this.markSlider(g, String(at(input.value)));
+            input.onchange = () => this.setParam(p.id, at(input.value));
+            g.querySelectorAll('.param-stops button').forEach(b => {
+                b.onclick = () => this.setParam(p.id, b.dataset.value);
+            });
         });
         this.markParams();
     }
@@ -266,7 +299,16 @@ class Explorer {
     markParams() {
         this.$('#step-params').querySelectorAll('[data-param]').forEach(g => {
             const v = String(this.state.params[g.dataset.param]);
-            g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
+            if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
+            else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
+        });
+    }
+
+    markSlider(g, v, setInput = false) {
+        g.querySelectorAll('.param-stops button').forEach(b => {
+            const on = b.dataset.value === v;
+            b.setAttribute('aria-pressed', String(on));
+            if (on && setInput) g.querySelector('input').value = b.dataset.i;
         });
     }
 
