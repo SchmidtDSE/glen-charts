@@ -213,11 +213,14 @@ export class MapView {
     }
 
     _tractAt(point) {
-        if (!this._choro || !this.map.getLayer('tract-fill')) return null;
-        const f = this.map.queryRenderedFeatures(point, { layers: ['tract-fill'] })[0];
+        if (!this._choro) return null;
+        const layers = this._choro.levels.map(L => `tract-fill-${L.id}`).filter(id => this.map.getLayer(id));
+        if (!layers.length) return null;
+        const f = this.map.queryRenderedFeatures(point, { layers })[0];
         if (!f) return null;
-        const id = String(f.properties[this.app.tracts.id_prop]);
-        return this._choro.values.has(id) ? { id, value: this._choro.values.get(id) } : null;
+        const L = this._choro.levels.find(x => `tract-fill-${x.id}` === f.layer.id);
+        const id = String(f.properties[L.id_prop]);
+        return L.values.has(id) ? { id, value: L.values.get(id) } : null;
     }
 
     async select(id, bbox) {
@@ -326,50 +329,73 @@ export class MapView {
     }
 
     /**
-     * rows: [{ [idField]: GEOID, [valueField]: number }]
+     * rows: [{ [idField]: GEOID, [valueField]: number }], or, when app.tracts lists several
+     * grids, { <level id>: rows } with one set of rows per grid, each keyed by its grid's id_prop.
      * spec: theme.map  { id_field, value_field, label, format, ramp, breaks? }
+     * Each grid is drawn only within its own minzoom/maxzoom, so a coarse grid can stand in
+     * for a fine one at low zoom. Quantile breaks come from the first grid with values.
      */
     async setChoropleth(spec, rows) {
         await this.ready;
         const m = this.map;
-        const t = this.app.tracts;
-        if (!m.getSource('tracts')) {
-            m.addSource('tracts', { type: 'vector', url: `pmtiles://${t.url}` });
-        }
-        for (const id of ['tract-fill', 'tract-line']) if (m.getLayer(id)) m.removeLayer(id);
+        const levels = tractLevels(this.app);
+        const byLevel = Array.isArray(rows) ? { [levels[0].id]: rows } : rows || {};
+        this.clearChoropleth();
 
-        const values = new Map();
-        for (const r of rows) {
-            const v = Number(r[spec.value_field]);
-            if (Number.isFinite(v)) values.set(String(r[spec.id_field]), v);
-        }
-        if (!values.size) { this.clearChoropleth(); return null; }
-        const breaks = spec.breaks || quantileBreaks([...values.values()], spec.ramp.length);
+        // with several grids, each grid's rows carry that grid's id_prop column
+        const idField = L => (levels.length > 1 ? L.id_prop : spec.id_field);
+        const sets = levels.map(L => {
+            const values = new Map();
+            for (const r of byLevel[L.id] || []) {
+                const v = Number(r[spec.value_field]);
+                if (Number.isFinite(v)) values.set(String(r[idField(L)]), v);
+            }
+            return values;
+        });
+        const first = sets.find(v => v.size);
+        if (!first) return null;
+        const breaks = spec.breaks || quantileBreaks([...first.values()], spec.ramp.length);
         const colorOf = v => spec.ramp[Math.min(spec.ramp.length - 1, breaks.filter(b => v >= b).length)];
 
-        const match = ['match', ['to-string', ['get', t.id_prop]]];
-        for (const [id, v] of values) match.push(id, colorOf(v));
-        match.push('rgba(0,0,0,0)');
-
-        m.addLayer({
-            id: 'tract-fill', type: 'fill', source: 'tracts', 'source-layer': t.source_layer,
-            filter: ['in', ['to-string', ['get', t.id_prop]], ['literal', [...values.keys()]]],
-            paint: { 'fill-color': match, 'fill-opacity': 0.78 },
-        }, 'jur-fill');
-        m.addLayer({
-            id: 'tract-line', type: 'line', source: 'tracts', 'source-layer': t.source_layer,
-            filter: ['in', ['to-string', ['get', t.id_prop]], ['literal', [...values.keys()]]],
-            paint: { 'line-color': '#fff', 'line-width': t.line_width ?? 0.4, 'line-opacity': 0.8 },
-        }, 'jur-fill');
-        this._choro = { ...spec, values };
-        return { breaks, ramp: spec.ramp, n: values.size };
+        levels.forEach((L, i) => {
+            const values = sets[i];
+            if (!values.size) return;
+            const src = `tracts-${L.id}`;
+            if (!m.getSource(src)) m.addSource(src, { type: 'vector', url: `pmtiles://${L.url}` });
+            const zoom = { ...(L.minzoom != null && { minzoom: L.minzoom }), ...(L.maxzoom != null && { maxzoom: L.maxzoom }) };
+            const match = ['match', ['to-string', ['get', L.id_prop]]];
+            for (const [id, v] of values) match.push(id, colorOf(v));
+            match.push('rgba(0,0,0,0)');
+            const filter = ['in', ['to-string', ['get', L.id_prop]], ['literal', [...values.keys()]]];
+            m.addLayer({
+                id: `tract-fill-${L.id}`, type: 'fill', source: src, 'source-layer': L.source_layer, filter, ...zoom,
+                paint: { 'fill-color': match, 'fill-opacity': 0.78 },
+            }, 'jur-fill');
+            m.addLayer({
+                id: `tract-line-${L.id}`, type: 'line', source: src, 'source-layer': L.source_layer, filter, ...zoom,
+                paint: { 'line-color': '#fff', 'line-width': L.line_width ?? 0.4, 'line-opacity': 0.8 },
+            }, 'jur-fill');
+        });
+        this._choro = { ...spec, levels: levels.map((L, i) => ({ ...L, values: sets[i] })) };
+        return { breaks, ramp: spec.ramp, n: first.size };
     }
 
     clearChoropleth() {
-        for (const id of ['tract-fill', 'tract-line']) if (this.map.getLayer(id)) this.map.removeLayer(id);
+        const m = this.map;
+        if (m.getStyle()) for (const l of m.getStyle().layers) if (/^tract-(fill|line)-/.test(l.id)) m.removeLayer(l.id);
         this._choro = null;
     }
 }
+
+/**
+ * app.tracts as a list of grids, each with an id: a single object (the original form) is one grid.
+ *   { id?, url, source_layer, id_prop, line_width?, minzoom?, maxzoom? }
+ */
+export const tractLevels = app => (Array.isArray(app.tracts) ? app.tracts : app.tracts ? [app.tracts] : [])
+    .map((t, i) => ({ ...t, id: String(t.id ?? i) }));
+
+/** The query a theme's map runs on each grid: map.levels[<grid id>], else map.query. */
+export const mapQueries = (app, spec) => tractLevels(app).map(L => ({ level: L.id, query: spec.levels?.[L.id] ?? spec.query }));
 
 /* ------------------------------------------------ isochrones & hexagons */
 

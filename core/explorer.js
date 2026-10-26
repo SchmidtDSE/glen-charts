@@ -33,7 +33,7 @@
  */
 
 import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, paramKey, paramTokens } from './engine.js';
-import { MapView, renderLegend, quantileBreaks } from './map.js';
+import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
 import { wireExportButton } from './export.js';
@@ -735,8 +735,11 @@ class Explorer {
         legend.hidden = false;
         legend.innerHTML = `<div class="title">${escapeHtml(theme.map.label)}</div><div class="tile-note">Loading…</div>`;
         try {
-            const rows = await this.engine.run(theme, theme.map.query, s.aoi);
+            // one query per grid when app.tracts lists several (theme.map.levels), else theme.map.query
+            const plan = mapQueries(this.config.app, theme.map);
+            const results = await Promise.all(plan.map(p => this.engine.run(theme, p.query, s.aoi)));
             if (token !== s.token || s.mapTheme !== want) return;
+            const rows = plan.length > 1 ? Object.fromEntries(plan.map((p, i) => [p.level, results[i]])) : results[0];
             const info = await this.mapView.setChoropleth(theme.map, rows);
             renderLegend(legend, theme.map, info);
         } catch (err) {

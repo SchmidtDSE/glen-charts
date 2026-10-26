@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.5**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.6**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.5/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.6/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.5/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.6/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -50,7 +50,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `labels` | `{ area, sections, place_hint, map_chips }` step titles |
 | `format` | `{ nodata: "—", pct_decimals: "auto" | 1 }` |
 | `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }` |
-| `tracts` | `{ url, source_layer, id_prop, line_width? }` for themes that color tracts (`theme.map`). `line_width` is the cell outline width, a number or a MapLibre expression (default 0.4); use a zoom expression for cells only a pixel or two wide at the landing zoom |
+| `tracts` | `{ url, source_layer, id_prop, line_width? }` for themes that color tracts (`theme.map`). `line_width` is the cell outline width, a number or a MapLibre expression (default 0.4); use a zoom expression for cells only a pixel or two wide at the landing zoom. A list of grids, each with an `id` and a `minzoom` and/or `maxzoom`, swaps grids by zoom, e.g. a coarse H3 grid zoomed out and a fine one zoomed in; see `theme.map.levels` |
 | `default_area` | `{ jurisdiction, id }`: the area whose profile a link with no `#…` opens on, instead of an empty picker |
 | `live_note` | text shown when a named area has no precomputed file |
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
@@ -99,6 +99,8 @@ A param is drawn as a segmented control (or, with `"control": "slider"`, as a sl
                 "stacked": true, "format": "pct", "compare": { "field": "frac" } } ],
   "map": { "query": "...", "id_field": "GEOID", "value_field": "v", "label": "...", "format": "pct", "ramp": ["#...", "..."] } }
 ```
+
+When `app.tracts` lists several grids, `map.levels` names the query for each grid by its id (`{ "h6": "map_h6", "h7": "map" }`; a grid not named uses `map.query`). Each grid's rows carry that grid's `id_prop` column, and fixed `breaks` keep the colours the same across grids (quantile breaks come from the first grid).
 
 Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
 
@@ -163,7 +165,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.5 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.6 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

@@ -122,6 +122,7 @@ function usedQueries(theme) {
         else names.add(c.query);
     }
     if (theme.map?.query) names.add(theme.map.query);
+    for (const q of Object.values(theme.map?.levels || {})) names.add(q);
     return [...names].filter(q => q && theme.queries[q]);
 }
 
