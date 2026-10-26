@@ -445,16 +445,25 @@ class Explorer {
         const list = this.$('#place-results');
         let matches = [];
         let active = -1;
+        // true while the box still shows the chosen area's name: list every area, not just that one
+        let browsing = false;
         const close = () => { list.hidden = true; active = -1; };
         const render = () => {
-            const q = input.value.trim().toLowerCase();
-            matches = (q ? this.state.features.filter(f => String(f.name).toLowerCase().includes(q)) : this.state.features).slice(0, 60);
+            const q = browsing ? '' : input.value.trim().toLowerCase();
+            matches = (q ? this.state.features.filter(f => String(f.name).toLowerCase().includes(q)) : this.state.features).slice(0, 200);
             list.innerHTML = matches.map((f, i) =>
                 `<li role="option" data-i="${i}" aria-selected="${i === active}">${escapeHtml(f.name)}${f.detail ? `<small>${escapeHtml(f.detail)}</small>` : ''}</li>`).join('');
             list.hidden = !matches.length;
+            list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
         };
-        input.addEventListener('input', () => { active = -1; render(); });
-        input.addEventListener('focus', render);
+        input.addEventListener('input', () => { browsing = false; active = -1; render(); });
+        input.addEventListener('focus', () => {
+            const f = this.state.feature;
+            browsing = !!f && input.value === f.name;
+            active = browsing ? this.state.features.slice(0, 200).findIndex(x => x === f || String(x.id) === String(f.id)) : -1;
+            render();
+            if (browsing) input.select();     // typing replaces the name and filters as usual
+        });
         input.addEventListener('keydown', e => {
             if (e.key === 'ArrowDown') { active = Math.min(matches.length - 1, active + 1); render(); e.preventDefault(); }
             else if (e.key === 'ArrowUp') { active = Math.max(0, active - 1); render(); e.preventDefault(); }
