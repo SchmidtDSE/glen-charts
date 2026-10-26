@@ -124,7 +124,14 @@ export function resolveParams(app, given = {}) {
 
 /** An option is a bare value or { value, label }. */
 export const optionValue = o => (o && typeof o === 'object' ? o.value : o);
-export const optionLabel = (p, o) => (o && typeof o === 'object' && o.label) || (p.format ? p.format.replace('{}', optionValue(o)) : String(optionValue(o)));
+export const optionLabel = (p, o) => {
+    if (o && typeof o === 'object' && o.label) return o.label;
+    const v = optionValue(o);
+    // a relative param's value is an offset from an area's base value: show its sign
+    const text = p.relative && Number(v) > 0 ? `+${v}` : p.relative && Number(v) < 0 ? `−${Math.abs(Number(v))}` : String(v);
+    const f = (p.relative && p.relative.offset_format) || p.format;
+    return f ? f.replace('{}', text) : text;
+};
 
 /** { WIDTH: '10', ... } for template expansion. */
 export function paramTokens(app, params = {}) {

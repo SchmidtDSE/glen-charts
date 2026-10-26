@@ -27,7 +27,11 @@
  * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, default_area, overlays (as the
  * extension overlays, with a declared popup; see installOverlays), leaderboard
  * (core/leaderboard.js: a second tab ranking every area of one type).
- * A param with "control": "slider" is drawn as a slider over its options.
+ * A param with "control": "slider" is drawn as a slider over its options. A slider param with
+ * "relative": { theme, query, field, format?, note?, offset_format? } holds offsets from a value
+ * that depends on the area (e.g. a species' measured threshold): once an area is chosen, the query
+ * is run and each stop is labelled base + offset; note ("Default: the team's value, {}") shows the
+ * base, and offset_format ("{} °C from the team's value") labels the offset elsewhere.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
  */
@@ -37,7 +41,7 @@ import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
 import { wireExportButton } from './export.js';
-import { escapeHtml, setFormatOptions } from './format.js';
+import { escapeHtml, setFormatOptions, fmt } from './format.js';
 
 const SHELL = `
     <section id="map-wrap">
@@ -283,6 +287,7 @@ class Explorer {
             <div class="seg" role="radiogroup" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
             </div>`}
+            ${p.relative ? `<div class="step-help param-base" data-base="${escapeHtml(p.id)}" hidden></div>` : ''}
             ${p.help ? `<div class="step-help">${escapeHtml(p.help)}</div>` : ''}`).join('');
         step.querySelectorAll('.seg[data-param] button').forEach(b => {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
@@ -299,6 +304,40 @@ class Explorer {
             });
         });
         this.markParams();
+        this.relabelRelative();
+    }
+
+    /**
+     * Relative slider params: label each stop as base + offset, the base read from the chosen
+     * area (param.relative.query in param.relative.theme, first row, .field). With no area, or
+     * before the base is known, stops show the signed offset.
+     */
+    async relabelRelative() {
+        const app = this.config.app, s = this.state, token = s.token;
+        for (const p of app.params.filter(x => x.relative && x.control === 'slider')) {
+            const g = this.$(`#step-params .param-slider[data-param="${p.id}"]`);
+            const note = this.$(`#step-params [data-base="${p.id}"]`);
+            if (!g) continue;
+            const r = p.relative;
+            let base = null;
+            if (s.aoi) {
+                const theme = this.config.themeById?.[r.theme] || this.config.themes.find(t => t.id === r.theme) || this.config.overview;
+                try {
+                    const rows = await this.engine.run(theme, r.query, s.aoi);
+                    base = Number(rows?.[0]?.[r.field]);
+                } catch (err) { console.error(err); }
+                if (token !== s.token) return;      // the area or a setting changed meanwhile
+            }
+            const known = Number.isFinite(base);
+            g.querySelectorAll('.param-stops button').forEach(b => {
+                const d = Number(b.dataset.value);
+                b.textContent = known ? fmt(base + d, r.format || 'num1') : optionLabel({ relative: {} }, b.dataset.value);
+            });
+            if (note) {
+                note.hidden = !(known && r.note);
+                if (known && r.note) note.textContent = r.note.replace('{}', fmt(base, r.format || 'num1'));
+            }
+        }
     }
 
     markParams() {
@@ -516,6 +555,7 @@ class Explorer {
         if (this.state.view === 'leaderboard') return;
         if (aoi) this.renderReport();
         else this.renderIntro();
+        this.relabelRelative();
     }
 
     syncPickHint() {

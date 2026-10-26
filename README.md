@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.7**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.8**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Neither app has moved onto it yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.7/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.8/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.7/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.8/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -85,6 +85,17 @@ An area type:
 ```
 
 A param is drawn as a segmented control (or, with `"control": "slider"`, as a slider over its options, for ordered settings such as a resolution), kept in the link (`?width=20`), expanded as `{{WIDTH}}` in every SQL template (area, list and theme), and part of every cache key and precomputed file path. Its value is always one of its options, so it is safe in SQL. An option may be `{ "value": ..., "label": ... }`.
+
+A slider param can hold offsets from a value that depends on the chosen area, such as a species' measured threshold that the reader may move up or down:
+
+```json
+{ "id": "adjust", "label": "Leaf threshold in °C", "token": "ADJUST", "control": "slider",
+  "options": [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2], "default": 0,
+  "relative": { "theme": "exposure", "query": "base", "field": "leaf_c", "format": "num1",
+                "note": "The slider starts at the team's value, {} °C.", "offset_format": "{} °C from the team's value" } }
+```
+
+Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
 
 ## Themes
 
@@ -165,7 +176,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.7 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.8 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
