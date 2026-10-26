@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.10**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). The Assessment Explorer runs on it; tpl-cities has not moved yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.3.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.10/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.3.0/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.10/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.3.0/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -111,6 +111,8 @@ Once an area is chosen, the explorer runs `relative.query` (a theme query return
   "map": { "query": "...", "id_field": "GEOID", "value_field": "v", "label": "...", "format": "pct", "ramp": ["#...", "..."] } }
 ```
 
+`map.type: "hex"` draws H3 cells instead of tracts: `id_field` holds each cell's id as a string (`h3_h3_to_string`), so the page needs [h3-js](https://github.com/uber/h3-js).
+
 When `app.tracts` lists several grids, `map.levels` names the query for each grid by its id (`{ "h6": "map_h6", "h7": "map" }`; a grid not named uses `map.query`). Each grid's rows carry that grid's `id_prop` column, and fixed `breaks` keep the colours the same across grids (quantile breaks come from the first grid).
 
 Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
@@ -165,7 +167,7 @@ export default {
   tokens:   { LAND: (aoi, app, params) => '...SQL...' },        // extra template tokens
   charts:   { representation: { load(ctx), render(el, chart, data, ctx), css } },
   overlays: [{ id, url, source_layer, type, paint, popup: props => html, legend: html, toggle: 'Show …' }],
-  sources:  [polygonSource()],                                   // sources/polygon-source.js: draw or upload a polygon
+  sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
 };
@@ -173,10 +175,34 @@ export default {
 
 A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` is `{ engine, theme, chart, aoi, isRegion, params, opts }`. Imports of glen-charts from jsDelivr inside an extension module resolve to the local library when the CLI runs it.
 
+### Area sources
+
+A source adds an area mode with its own controls. The library ships two:
+
+- `sources/polygon-source.js`, `polygonSource()`: draw a polygon or upload GeoJSON. Not kept in the link.
+- `sources/isochrone-source.js`, `isochroneSource()`: the area reachable from a point (map click or address search) by walking, cycling or driving within a time budget, from a [Valhalla](https://github.com/valhalla/valhalla) router. Its bands add `{{BANDS10}}` (every cell with the smallest band that reaches it), `{{ORIGIN_LAT}}` and `{{ORIGIN_LON}}` to theme SQL, and the point, mode and time are kept in the link (`#@37.8,-122.27?mode=walk&t=15`). Configured in `app.json`:
+
+  ```json
+  "routing":    { "url": "https://valhalla1.openstreetmap.de" },
+  "isochrones": { "modes": ["walk", "bike", "drive"], "minutes": [5, 10, 15], "default_mode": "walk", "default_minutes": 15,
+                  "geocode_bbox": [-124.5, 32.5, -114.1, 42.1], "hint": "Click anywhere in California to start" }
+  ```
+
+An app whose only area mode is a source opens on it, and leaves the mode out of the link. A source is an object:
+
+```js
+{ id, label, description, kindLabel,
+  mount(stepEl, ctx),            // draw its controls; ctx = { mapView, engine, app, setAoi, select, showHint, hideHint, showMessage, writeHash }
+  activate({ restoring }), deactivate(),
+  reportHead?(aoi) → html,       // under the report title
+  hashState?() → { path, query }, restore?(path, query),   // state kept in the link
+  hashable: false }              // instead of hashState/restore: not kept in the link
+```
+
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.10 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.3.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

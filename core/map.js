@@ -417,6 +417,10 @@ Object.assign(MapView.prototype, {
         this._origin.setLngLat(lngLat).addTo(this.map);
     },
 
+    clearOrigin() {
+        this._origin?.remove();
+    },
+
     /**
      * bands: [{ minutes, geometry }] ascending; `selected` minutes is emphasised.
      * Drawn largest-first so smaller bands sit on top.
