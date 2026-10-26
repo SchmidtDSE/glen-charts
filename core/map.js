@@ -359,7 +359,7 @@ export class MapView {
         m.addLayer({
             id: 'tract-line', type: 'line', source: 'tracts', 'source-layer': t.source_layer,
             filter: ['in', ['to-string', ['get', t.id_prop]], ['literal', [...values.keys()]]],
-            paint: { 'line-color': '#fff', 'line-width': 0.4, 'line-opacity': 0.8 },
+            paint: { 'line-color': '#fff', 'line-width': t.line_width ?? 0.4, 'line-opacity': 0.8 },
         }, 'jur-fill');
         this._choro = { ...spec, values };
         return { breaks, ramp: spec.ramp, n: values.size };

@@ -24,7 +24,7 @@
  * labels { area, sections, place_hint, map_chips }, statewide { label, kind_label,
  * description, selectable (false: comparisons only, not an area to pick) }, reference
  * { values, label, chart_label, title, citation, url, note }, project_url,
- * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, overlays (as the
+ * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, default_area, overlays (as the
  * extension overlays, with a declared popup; see installOverlays), leaderboard
  * (core/leaderboard.js: a second tab ranking every area of one type).
  * A param with "control": "slider" is drawn as a slider over its options.
@@ -158,10 +158,15 @@ class Explorer {
         window.addEventListener('hashchange', () => this.restoreFromHash());
     }
 
-    /** The view with no link: the leaderboard when app.leaderboard.default, else the default mode's profile. */
+    /** The view with no link: the leaderboard when app.leaderboard.default, else app.default_area's profile, else the default mode's. */
     async landing() {
-        await this.setMode(this.defaultMode());
-        if (this.config.app.leaderboard?.default) await this.setView('leaderboard');
+        const app = this.config.app;
+        // app.default_area { jurisdiction, id }: open on that area's profile rather than an empty picker
+        const def = app.default_area;
+        const mode = def && app.jurisdictions.some(j => j.id === def.jurisdiction) ? def.jurisdiction : this.defaultMode();
+        await this.setMode(mode);
+        if (app.leaderboard?.default) await this.setView('leaderboard');
+        else if (def && mode === def.jurisdiction) this.pickById(String(def.id));
     }
 
     defaultMode() {
