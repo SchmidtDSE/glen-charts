@@ -35,8 +35,9 @@
  *        (for a local query server running whole-catalog scans).
  *
  * An app's extensions module (app.json "extensions", e.g. "app/extensions.js")
- * is imported for its template tokens; its imports of glen-charts from
- * jsDelivr resolve to this copy of the library.
+ * is imported for its template tokens, and for its overlays' tile URLs, which
+ * `sources` cites; its imports of glen-charts from jsDelivr resolve to this
+ * copy of the library.
  */
 
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
@@ -71,10 +72,10 @@ const themeFilter = what === 'lists' ? [overviewId]
     : (what === 'statewide' || what === 'results' || what === 'peers') && only.length ? [overviewId, ...only] : null;
 const config = await loadConfig(root, fetchText, themeFilter ? { themes: themeFilter } : {});
 const app = config.app;
-let tokens = {};
+let tokens = {}, overlays = [];
 if (app.extensions) {
     const mod = await import(pathToFileURL(resolve(root, app.extensions)).href);
-    tokens = (mod.default || mod).tokens || {};
+    ({ tokens = {}, overlays = [] } = mod.default || mod);
 }
 const mcpUrl = process.env.MCP_URL || app.mcp_url;
 const client = process.env.MCP_TIMEOUT_MS ? new McpQueryClient(mcpUrl, { timeoutMs: Number(process.env.MCP_TIMEOUT_MS) }) : null;
@@ -241,7 +242,7 @@ if (what === 'all' || what === 'sources') {
     // does), so the export can cite a dataset without crawling the catalog.
     const catalogUrl = app.stac_catalog || 'https://s3-west.nrp-nautilus.io/public-data/stac/catalog.json';
     const allSql = await Promise.all(allThemes.flatMap(t => Object.values(t.queries).filter(allFile).map(q => fetchText(`${root}/${t.dir}/${allFile(q)}`))));
-    const text = [JSON.stringify(app), ...allThemes.flatMap(t => Object.values(t.sql)), ...allSql].join('\n');
+    const text = [JSON.stringify(app), ...overlays.map(o => o.url || ''), ...allThemes.flatMap(t => Object.values(t.sql)), ...allSql].join('\n');
     const paths = [...new Set(dataPaths(text))];
     const t0 = Date.now();
     const collections = await crawl(catalogUrl);
