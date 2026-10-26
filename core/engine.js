@@ -264,7 +264,9 @@ export class Engine {
     }
 
     /**
-     * A query's precomputed rows for a named area, or null. Two layouts:
+     * A query's precomputed rows for the whole region (data/statewide.json, or
+     * data/statewide/<paramKey>.json for an app with params), or a named
+     * area, or null. Two layouts for a named area:
      *   data/areas/<kind>[/<paramKey>]/<id>.json   every query of every theme
      *     for one area (`precompute areas`)
      *   data/results/<theme>/<query>/<kind>[-<paramKey>].json   one query for
@@ -272,7 +274,8 @@ export class Engine {
      *     (`precompute results`)
      */
     async precomputed(theme, queryName, aoi) {
-        if (!aoi.id || !aoi.kind || aoi.kind === 'state' || aoi.kind === 'polygon') return null;
+        if (aoi.kind === 'state') return this.statewideRows(theme, queryName, aoi.params || {});
+        if (!aoi.id || !aoi.kind || aoi.kind === 'polygon') return null;
         const byId = await this.allResults(theme, queryName, aoi);
         const hit = byId?.[aoi.id] ?? byId?.[String(Number(aoi.id))];
         if (hit) return hit;          // an id missing from the file runs live
@@ -294,17 +297,22 @@ export class Engine {
         return this._json(`area|${aoi.key}`, `${this.dataBase}/data/areas/${this._areaDir(aoi)}${encodeURIComponent(aoi.id)}.json`);
     }
 
-    /** Whole-region comparison rows: precomputed file first, live query as fallback; null without a region. */
+    /** The region's precomputed rows for one query, or null. */
+    async statewideRows(theme, queryName, params = {}) {
+        const pk = paramKey(this.config.app, params);
+        if (!pk) return this.statewide?.results?.[theme.id]?.[queryName] ?? null;
+        const f = await this._json(`statewide|${pk}`, `${this.dataBase}/data/statewide/${pk}.json`);
+        return f?.results?.[theme.id]?.[queryName] ?? null;
+    }
+
+    /**
+     * Whole-region comparison rows: precomputed file first, live query as
+     * fallback (none for a query marked "statewide": false); null without a region.
+     */
     runStatewide(theme, queryName, params = {}) {
         const aoi = statewideAoi(this.config.app, params);
         if (!aoi) return Promise.resolve(null);
-        const pre = this.statewide?.results?.[theme.id]?.[queryName];
-        if (pre && !paramKey(this.config.app, params)) return Promise.resolve(pre);
-        if (theme.queries[queryName].statewide === false) return Promise.resolve(null);
-        if (paramKey(this.config.app, params)) {
-            return this._json(`statewide|${paramKey(this.config.app, params)}`, `${this.dataBase}/data/statewide/${paramKey(this.config.app, params)}.json`)
-                .then(f => f?.results?.[theme.id]?.[queryName] ?? this.run(theme, queryName, aoi));
-        }
+        if (theme.queries[queryName].statewide === false) return this.statewideRows(theme, queryName, params);
         return this.run(theme, queryName, aoi);
     }
 
