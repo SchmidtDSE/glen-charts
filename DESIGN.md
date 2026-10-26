@@ -1,6 +1,6 @@
 # glen-charts design
 
-**Status:** 0.1.0 released. The coasts explorer is the first app built on it; tpl-cities and the Assessment Explorer have not moved yet. **Scope:** [tpl-cities](https://github.com/boettiger-lab/tpl-cities), [ca-30x30/assessment](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment), [geo-agent](https://github.com/boettiger-lab/geo-agent).
+**Status:** 0.2.10 released. The coasts explorer and the Assessment Explorer run on it; tpl-cities has not moved yet. **Scope:** [tpl-cities](https://github.com/boettiger-lab/tpl-cities), [ca-30x30/assessment](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment), [geo-agent](https://github.com/boettiger-lab/geo-agent).
 
 There are now two no-LLM explorer apps on the GLEN architecture: fixed SQL templates over H3-indexed parquet, run either on our duckdb MCP server or in the visitor's browser with DuckDB-wasm. About three-quarters of each app's code is the same machinery, and the copies have already started to drift apart. This document sets out which parts become the shared library, glen-charts, which parts stay in each app, and how to move there without breaking either app.
 
@@ -10,13 +10,14 @@ There are now two no-LLM explorer apps on the GLEN architecture: fixed SQL templ
 |---|---|
 | Name and home | `SchmidtDSE/glen-charts` |
 | Relation to geo-agent | Separate for now. Converging the export code (SQL to R and Python, citations) can come later. |
-| Migration of tpl-cities and the Assessment Explorer | On hold. Both still run their own copies. |
+| Migration of the Assessment Explorer | Done in 0.2.8; the app now runs 0.2.10. |
+| Migration of tpl-cities | On hold. It still runs its own copy. |
 | 0.1.0 | Released from tpl-cities' modules plus the Assessment Explorer's additions, so the coasts explorer can build on it. It changes neither existing app. |
 | What is general vs app-specific | Agreed with the coasts app: see *What 0.1.0 adds*. The test is whether tpl-cities, the assessment, or a plausible later glen app would use it. |
 
 ## Summary
 
-glen-charts is a library of ES modules served from jsDelivr at a pinned tag, as geo-agent is, with no build step. It runs the same SQL on either of two query engines, chosen per app in configuration: the MCP server or DuckDB-wasm in the browser. It is designed around five extension points that the two apps have already had to add by hand: query backend, template tokens, area sources, chart types and precompute jobs. When migration starts, tpl-cities moves first, because its code is the parent of both forks, and the Assessment Explorer follows. A migration step is accepted only when the library generates the same SQL text as the app's own engine for every query and area, and the regenerated `data/` matches every value to within 1e-9. (Byte-for-byte is too strict: DuckDB sums in parallel, so re-running the same SQL moves the last digits.)
+glen-charts is a library of ES modules served from jsDelivr at a pinned tag, as geo-agent is, with no build step. It runs the same SQL on either of two query engines, chosen per app in configuration: the MCP server or DuckDB-wasm in the browser. It is designed around five extension points that the two apps have already had to add by hand: query backend, template tokens, area sources, chart types and precompute jobs. The Assessment Explorer moved first; tpl-cities follows. A migration step is accepted only when the library generates the same SQL text as the app's own engine for every query and area, and the regenerated `data/` matches every value to within 1e-9. (Byte-for-byte is too strict: DuckDB sums in parallel, so re-running the same SQL moves the last digits.)
 
 ## What the two apps share today
 
@@ -157,14 +158,14 @@ Everything below came from the coasts explorer, was judged general, and is in th
 | The four pillars, their variables and SQL | The app's content. |
 | Score semantics: direction, transforms, mid-rank in SQL, the "provisional" label, the pillar summary as a SQL headline | Scoring choices belong to the app, visible in its exported SQL. |
 
-## Migration plan (on hold)
+## Migration plan
 
 Each step leaves both apps deployed and working. The acceptance test is mechanical: the library must generate the same SQL text as the app's own engine for every query and area, and the app's `data/` must regenerate to within 1e-9 on every value. The assessment must also pass `validate.py` unchanged.
 
 1. **Create the library (done: 0.1.0).** Built from tpl-cities' modules with the assessment's additions folded in, which also covers most of step 3. Checked against both apps without changing them: identical SQL for all 2,510 assessment and 14,973 tpl-cities query × area pairs; the assessment's Mono ecoregion regenerated within 1e-9; both apps' reports render the same text line for line from the library (tpl-cities differs only in placing the place search above the dimension buttons).
-2. **Move tpl-cities onto it.** Its main site, access variant and wasm variant become three small entry points. The access variant's isochrone and geocoder code (`iso.js`, `access.js`) still has to become an area source; the map already has the isochrone layers. The wasm tile scripts (`browser-tiles.py`, `browser-aoi.py`) are still California-specific and stay in tpl-cities until they read their extent from `app.json`. Regenerate `data/` and compare, and check that `/` and `/wasm/` still return the same numbers.
+2. **Move tpl-cities onto it (on hold).** Its main site, access variant and wasm variant become three small entry points. The access variant's isochrone and geocoder code (`iso.js`, `access.js`) still has to become an area source; the map already has the isochrone layers. The wasm tile scripts (`browser-tiles.py`, `browser-aoi.py`) are still California-specific and stay in tpl-cities until they read their extent from `app.json`. Regenerate `data/` and compare, and check that `/` and `/wasm/` still return the same numbers.
 3. **Port the assessment's additions into the library (done: 0.1.0).** These are the precomputed per-area results, `--theme`, file names by raw id, the one-decimal percent option and the export legend fix. tpl-cities gets them with no further work.
-4. **Move the Assessment Explorer onto it.** `{{LAND}}`, the representation table and the conserved-areas overlay register as extensions, and polygon drawing moves into the library as an area source. Regenerate, compare and run `validate.py`. The app can then add a wasm variant like tpl-cities' `/wasm/`, once its datasets are in a browser tile set.
+4. **Move the Assessment Explorer onto it (done: 0.2.8).** `{{LAND}}`, the representation table, the conserved-areas overlay and the framework note are the app's extensions (`app/extensions.js`); polygon drawing uses the library's area source. The library generates the same SQL as the app's old engine for all 2,520 query × area pairs (the region, 251 named areas and a drawn polygon), so `data/` and the inputs to `validate.py` did not change. The port found two library gaps, fixed in 0.2.9 (the region's own view reads `data/statewide.json`) and 0.2.10 (`precompute sources` cites extension overlays). The app can now add a wasm variant like tpl-cities' `/wasm/`, once its datasets are in a browser tile set.
 5. **Extract the California jurisdiction definitions** and point both apps at them.
 6. **Tag `1.0.0`** once a third app, or the minimal example, has been built from the README alone.
 
