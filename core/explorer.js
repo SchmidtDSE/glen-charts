@@ -178,6 +178,7 @@ class Explorer {
         if (app.default_mode) return app.default_mode;
         if (app.statewide && app.statewide.selectable !== false) return 'state';
         if (app.jurisdictions.length === 1 && !this.ext.sources.length) return app.jurisdictions[0].id;
+        if (!app.jurisdictions.length && this.ext.sources.length === 1) return this.ext.sources[0].id;
         return null;
     }
 
@@ -266,6 +267,9 @@ class Explorer {
                 select: () => { if (this.state.mode !== s.id) this.setMode(s.id, { restoring: true }); },
                 showHint: t => this.showHint(t),
                 hideHint: () => this.hideHint(),
+                showMessage: html => { if (this.state.mode === s.id) this.$('#report').innerHTML = html; },
+                writeHash: () => this.writeHash(),
+                app: this.config.app,
             });
         }
     }
@@ -703,7 +707,8 @@ class Explorer {
                     <button class="ghost-btn" id="copy-link" type="button" title="Copy a link to this view">Copy link</button>
                 </div>
             </div>
-            ${this.ext.reportHead ? this.ext.reportHead(aoi, { engine: this.engine, reference: this.reference, isRegion }) || '' : ''}`;
+            ${this.ext.reportHead ? this.ext.reportHead(aoi, { engine: this.engine, reference: this.reference, isRegion }) || '' : ''}
+            ${this.activeSource()?.reportHead?.(aoi) || ''}`;
         this.$('#copy-link').onclick = async () => {
             try { await navigator.clipboard.writeText(location.href); this.$('#copy-link').textContent = 'Copied'; } catch { /* ignore */ }
         };
@@ -776,6 +781,7 @@ class Explorer {
         const theme = s.mapTheme && this.config.themes.find(t => t.id === s.mapTheme);
         if (!s.aoi || !theme || !theme.map || !s.themes.has(theme.id)) {
             this.mapView.clearChoropleth();
+            this.mapView.clearHexChoropleth();
             legend.hidden = true;
             return;
         }
@@ -784,18 +790,30 @@ class Explorer {
         legend.hidden = false;
         legend.innerHTML = `<div class="title">${escapeHtml(theme.map.label)}</div><div class="tile-note">Loading…</div>`;
         try {
+            // "type": "hex" draws H3 cells from the query's id strings; otherwise tracts,
             // one query per grid when app.tracts lists several (theme.map.levels), else theme.map.query
-            const plan = mapQueries(this.config.app, theme.map);
+            const hex = theme.map.type === 'hex';
+            const plan = hex ? [{ query: theme.map.query }] : mapQueries(this.config.app, theme.map);
             const results = await Promise.all(plan.map(p => this.engine.run(theme, p.query, s.aoi)));
             if (token !== s.token || s.mapTheme !== want) return;
             const rows = plan.length > 1 ? Object.fromEntries(plan.map((p, i) => [p.level, results[i]])) : results[0];
-            const info = await this.mapView.setChoropleth(theme.map, rows);
+            if (hex) this.mapView.clearChoropleth(); else this.mapView.clearHexChoropleth();
+            const info = hex ? await this.mapView.setHexChoropleth(theme.map, rows) : await this.mapView.setChoropleth(theme.map, rows);
             renderLegend(legend, theme.map, info);
         } catch (err) {
             if (token !== s.token) return;
             legend.innerHTML = `<div class="err">Map query failed: ${escapeHtml(shortErr(err))}</div>`;
             console.error(err, err.sql);
         }
+    }
+
+    /** The area source in use, if the current mode is one. */
+    activeSource() { return this.ext.sources.find(x => x.id === this.state.mode) || null; }
+
+    /** The source that is the app's only area mode, or null. */
+    soleSource() {
+        const modes = this.modes();
+        return modes.length === 1 ? this.ext.sources.find(x => x.id === modes[0].id) || null : null;
     }
 
     showHint(text) { const h = this.$('#map-hint'); h.textContent = text; h.hidden = false; }
@@ -807,9 +825,14 @@ class Explorer {
         const s = this.state;
         const app = this.config.app;
         const parts = [];
-        if (s.mode && s.mode !== 'state') parts.push(s.mode);
+        const source = this.activeSource();
+        // an app's only area mode, when it is a source, is left out of the link
+        if (s.mode && s.mode !== 'state' && !(source && source === this.soleSource())) parts.push(s.mode);
         if (s.jur && s.feature) parts.push(encodeURIComponent(s.feature.id));
         const q = new URLSearchParams();
+        const sh = source?.hashState?.();
+        if (sh?.path) parts.push(sh.path);
+        for (const [k, v] of Object.entries(sh?.query || {})) q.set(k, v);
         if (s.themes.size !== this.config.themes.length) q.set('themes', this.orderedThemes().map(t => t.id).join(','));
         if (s.mapTheme && this.config.themes.some(t => t.map)) q.set('map', s.mapTheme);
         for (const p of app.params) if (String(s.params[p.id]) !== String(p.default ?? optionValue(p.options[0]))) q.set(p.id, s.params[p.id]);
@@ -840,7 +863,17 @@ class Explorer {
         s.params = resolveParams(this.config.app, given);
         this.markParams();
         const [modeId, featId] = path.split('/');
-        const source = this.ext.sources.find(x => x.id === modeId);
+        let source = this.ext.sources.find(x => x.id === modeId);
+        // a source that keeps state in the link: the rest of the path and the query are its own
+        let sourcePath = path.split('/').slice(1).join('/');
+        const sole = this.soleSource();
+        if (!source && sole?.restore) { source = sole; sourcePath = path; }
+        if (source?.restore) {
+            await this.setMode(source.id, { restoring: true });
+            if (!s.aoi) this.renderIntro();
+            await source.restore(sourcePath, q);
+            return true;
+        }
         if (!modeId && q.get('view') === 'leaderboard' && this.config.app.leaderboard) { await this.setView('leaderboard', { lbState: q.get('score') || '' }); return true; }
         if (!modeId || (source && source.hashable === false)) { await this.landing(); return true; }
         if (!this.modes().some(m => m.id === modeId)) { await this.setMode(this.defaultMode()); return true; }
