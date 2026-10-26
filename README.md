@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.2.9**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). The Assessment Explorer runs on it; tpl-cities has not moved yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.2.10**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). The Assessment Explorer runs on it; tpl-cities has not moved yet; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.9/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.10/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.9/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.2.10/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -158,7 +158,7 @@ Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{A
 
 ## Extensions
 
-What configuration cannot express, an app passes to `createExplorer({ extensions })` from its own module (`app/extensions.js`, also named in `app.json` `extensions` so the CLI gets its tokens):
+What configuration cannot express, an app passes to `createExplorer({ extensions })` from its own module (`app/extensions.js`, also named in `app.json` `extensions` so the CLI gets its tokens and cites its overlays; the CLI imports it under Node, so it must not touch `document` or `maplibregl` at load time):
 
 ```js
 export default {
@@ -176,7 +176,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.2.9 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.2.10 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
@@ -187,7 +187,7 @@ npx github:SchmidtDSE/glen-charts#v0.2.9 precompute --site <app dir> <job> [args
 | `results [theme ...]` | `data/results/<theme>/<query>/<jur>[-<params>].json` from each query's `all` file; `--jur a,b` limits area types |
 | `distributions <jur>` | `data/distributions/<jur>[/<params>]/<theme>.json` from the area files (no queries) |
 | `peers [theme ...]` | `data/peers/<theme>/<jur>.json` from a theme's `peers` SQL |
-| `sources` | `data/sources.json`, the STAC records of every dataset the config reads, for the export's citations |
+| `sources` | `data/sources.json`, the STAC records of every dataset the config reads or maps (including the extensions module's overlays), for the export's citations |
 | (none) | lists, statewide, peers, sources |
 
 `--param width=all` runs every option; `--param width=20` one; the default is each param's default. `MCP_URL` overrides `mcp_url`; `MCP_TIMEOUT_MS` overrides the 300 s query timeout (for a local query server running whole-catalog scans).
