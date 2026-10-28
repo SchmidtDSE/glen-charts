@@ -1,6 +1,6 @@
 # glen-charts design
 
-**Status:** 0.3.0 released. The coasts explorer, the Assessment Explorer and all three tpl-cities sites run on it. **Scope:** [tpl-cities](https://github.com/boettiger-lab/tpl-cities), [ca-30x30/assessment](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment), [geo-agent](https://github.com/boettiger-lab/geo-agent).
+**Status:** 0.4.0 released. The coasts explorer, the Assessment Explorer and all three tpl-cities sites run on it. 0.4.0 adds compare mode (README), first used by the Wallacea comparison explorer. **Scope:** [tpl-cities](https://github.com/boettiger-lab/tpl-cities), [ca-30x30/assessment](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment), [geo-agent](https://github.com/boettiger-lab/geo-agent).
 
 There are now two no-LLM explorer apps on the GLEN architecture: fixed SQL templates over H3-indexed parquet, run either on our duckdb MCP server or in the visitor's browser with DuckDB-wasm. About three-quarters of each app's code is the same machinery, and the copies have already started to drift apart. This document sets out which parts become the shared library, glen-charts, which parts stay in each app, and how to move there without breaking either app.
 
