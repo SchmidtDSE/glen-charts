@@ -16,6 +16,8 @@
  *                                                from the area files (no queries)
  *   data/peers/<theme>/<jur>.json                a theme's "peers" SQL per area type
  *   data/sources.json                            STAC records of every dataset read
+ *   data/baselines/<country>/<preset>.json       compare mode: a catalog preset's units scored
+ *                                                on every theme
  *
  *   glen-charts precompute [--site <app dir>] <job> [args] [flags]
  *     lists [jur ...]
@@ -25,6 +27,9 @@
  *     distributions <jur>
  *     peers [theme ...]
  *     sources
+ *     baselines [country ...]       compare mode: every catalog preset's units on every theme,
+ *                                   per country (default: compare.precompute.countries);
+ *                                   --preset a,b limits presets, --theme a,b re-runs only those themes
  *     (no job)                      lists, statewide, sources
  *   flags:
  *     --site <dir>       the app folder holding config/ and data/ (default: .)
@@ -47,6 +52,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig, Engine, statewideAoi, jurisdictionAoi, expand, paramKey, paramCombos, paramTokens, allFile } from '../core/engine.js';
 import { dataPaths, pathPrefix } from '../core/sources.js';
 import { McpQueryClient } from '../core/mcp.js';
+import { countryTokens, presetsFor, presetUnitsSql, withStrata, strataNamesSql } from '../sources/units.js';
 
 register('./resolve-cdn.mjs', import.meta.url);
 
@@ -61,6 +67,7 @@ const force = !!flag('--force', 0);
 const site = flag('--site')?.[0] || '.';
 const onlyThemes = flag('--theme')?.[0]?.split(',') || null;
 const jurFilter = flag('--jur')?.[0]?.split(',') || null;
+const presetPick = flag('--preset')?.[0]?.split(',') || null;
 const paramPick = {};
 for (let p; (p = flag('--param')); ) { const [k, v] = p[0].split('='); paramPick[k] = v; }
 
@@ -231,6 +238,52 @@ if (what === 'all' || what === 'peers') {
                 console.log(`peers ${theme.id}.${jur.id}: ${rows.length} rows (${secs(t0)}s)`);
             } catch (err) {
                 console.error(`peers ${theme.id}.${jur.id}: FAILED — ${err.message.split('\n')[0]}`);
+            }
+        }
+    }
+}
+
+if (what === 'baselines') {
+    // Compare mode: every catalog preset's units scored on every theme, per
+    // country, so only the reader's own units run live. One file per preset:
+    // the unit names, the strata the units touch, and each theme's rows as
+    // [id, stratum, variable, value, w] with values to 6 significant digits.
+    const cmp = app.compare;
+    if (!cmp) throw new Error('baselines: app.json has no "compare" block');
+    const countries = JSON.parse(await fetchText(`${root}/${cmp.countries}`));
+    const ids = only.length ? only : cmp.precompute?.countries || [cmp.default_country];
+    for (const cid of ids) {
+        const country = countries.find(c => c.id === cid);
+        if (!country) { console.error(`baselines: no country ${cid} in ${cmp.countries}`); continue; }
+        const ctok = countryTokens(country);
+        for (const role of cmp.roles) {
+            for (const preset of presetsFor(role, cid)) {
+                if (presetPick && !presetPick.includes(preset.id)) continue;
+                const file = `${root}/data/baselines/${cid}/${preset.id}.json`;
+                let out = { generated: null, country: cid, role: role.id, preset: preset.id, units: {}, strata: [], columns: ['id', 'stratum', 'variable', 'value', 'w'], results: {} };
+                try { if (onlyThemes) out = JSON.parse(await readFile(file, 'utf8')); } catch { /* fresh */ }
+                const part = presetUnitsSql(preset, role.id, ctok);
+                let t0 = Date.now();
+                const names = await engine.client.query(`SELECT id::VARCHAR AS id, ANY_VALUE(name) AS name, COUNT(DISTINCT cell) AS cells, SUM(h3_cell_area(cell, 'km^2')) AS km2 FROM (${expand(preset.sql, ctok)}) GROUP BY 1`);
+                out.units = Object.fromEntries(names.map(r => [r.id, { name: r.name ?? null, cells: r.cells, km2: +Number(r.km2).toPrecision(4) }]));
+                out.strata = cmp.strata ? await engine.client.query(strataNamesSql([part], cmp.strata)) : [];
+                console.log(`baselines ${cid} ${preset.id}: ${names.length} units, ${out.strata.length} strata (${secs(t0)}s)`);
+                const UNITS = withStrata([part], cmp.strata);
+                for (const theme of config.themes) {
+                    if (onlyThemes && !onlyThemes.includes(theme.id)) continue;
+                    t0 = Date.now();
+                    try {
+                        const rows = await engine.client.query(expand(theme.sql.units, { ...ctok, UNITS }, `${theme.id}/units`));
+                        const sig = x => (x == null ? null : +Number(x).toPrecision(6));
+                        out.results[theme.id] = rows.map(r => [String(r.id), r.stratum, r.variable, sig(r.value), sig(r.w)]);
+                        console.log(`baselines ${cid} ${preset.id} ${theme.id}: ${rows.length} rows (${secs(t0)}s)`);
+                    } catch (err) {
+                        console.error(`baselines ${cid} ${preset.id} ${theme.id}: FAILED — ${err.message.split('\n')[0]}`);
+                    }
+                }
+                out.generated = new Date().toISOString();
+                await mkdir(`${root}/data/baselines/${cid}`, { recursive: true });
+                await writeFile(file, JSON.stringify(out));
             }
         }
     }
