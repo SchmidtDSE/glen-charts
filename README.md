@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.3.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.4.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.3.0/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.0/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.3.0/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.0/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -199,10 +199,39 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
   hashable: false }              // instead of hashState/restore: not kept in the link
 ```
 
+## Compare mode
+
+`core/compare.js`, `createCompare()`, is a second page shell for apps that score many units against comparison sets rather than profile one area. The reader picks a country, draws or uploads focal polygons (each shape or GeoJSON feature is its own unit), chooses a comparison set for each other role (a catalog preset, drawn or uploaded polygons, or none) and a basket of metrics. Every focal unit is then scored metric by metric in the browser (`core/score.js`): its mid-rank percentile among the floor and ceiling units, its percentage contrast with the floor median, and its retention of the ceiling median, with the median across the basket and its leave-one-metric-out range.
+
+`app.json` holds a `compare` block:
+
+```json
+"compare": {
+  "countries": "data/countries.json",
+  "default_country": "PE",
+  "strata": { "label": "Ecoregion", "plural": "ecoregions", "sql": "SELECT h0, h8, ECO_ID AS stratum, ECO_NAME AS name FROM ..." },
+  "landscapes": [{ "id": "strata", "label": "Same ecoregions", "default": true }, { "id": "country", "label": "Whole country" }],
+  "roles": [
+    { "id": "focal", "label": "Focal farms", "singular": "Focal farm", "color": "#c2410c", "help": "..." },
+    { "id": "floor", "label": "Floor", "color": "#8a6d3b", "default": "cocoa",
+      "presets": [{ "id": "cocoa", "label": "...", "countries": ["PE"], "sql": "SELECT h9::VARCHAR AS id, NULL AS name, h9 AS cell FROM ... WHERE h0 IN ({{H0S}})" }] },
+    { "id": "ceiling", "label": "Ceiling", "color": "#1d6b44", "default": "wdpa", "presets": [{ "...": "..." }] }
+  ],
+  "precompute": { "countries": ["PE"] }
+}
+```
+
+- The country list holds `{ id, iso3, name, bbox, h0s }` per country and sets `{{ISO2}}`, `{{ISO3}}` and `{{H0S}}` (its resolution-0 cells, for partition pruning) in every query.
+- A preset's `sql` returns `(id, name, cell)`, one row per H3 cell of each unit. `map: { pmtiles, source_layer, id_prop, name_prop }` draws its units from a tile set; otherwise single-cell units are drawn as hexagons from their ids, which needs [h3-js](https://github.com/uber/h3-js).
+- `strata.sql` returns `(h0, h8, stratum, name)`. With the "strata" landscape, comparison units count only in the strata the focal units touch.
+- Each theme has one query, `units`, over `{{UNITS}}`: a relation of `(grp, id, stratum, cell)` rows with cells at resolution 8, 9 or 10. It returns one row per `(grp, id, stratum, variable)` with `value`, the area-weighted mean over the unit's cells in that stratum, and `w`, the area behind it. The theme lists its `variables`: `{ id, label, dir, format, unit?, default?, source?, resolution?, licence?, range_check? }`. A theme with `"scored": false` holds covariates, which are shown and checked against each set's range but not scored.
+- Drawn and uploaded polygons are filled with resolution-10 cells on the query server; a polygon smaller than one cell gets the cell under an interior point. A run resolves the live units once and writes their cells into each theme query as a literal.
+- Catalog presets are read from `precompute baselines` files when they exist, and run live otherwise.
+
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.3.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.4.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
@@ -214,6 +243,7 @@ npx github:SchmidtDSE/glen-charts#v0.3.0 precompute --site <app dir> <job> [args
 | `distributions <jur>` | `data/distributions/<jur>[/<params>]/<theme>.json` from the area files (no queries) |
 | `peers [theme ...]` | `data/peers/<theme>/<jur>.json` from a theme's `peers` SQL |
 | `sources` | `data/sources.json`, the STAC records of every dataset the config reads or maps (including the extensions module's overlays), for the export's citations |
+| `baselines [country ...]` | compare mode: `data/baselines/<country>/<preset>.json`, every catalog preset's units scored on every theme; `--preset a,b` limits presets, `--theme a,b` re-runs only those themes |
 | (none) | lists, statewide, peers, sources |
 
 `--param width=all` runs every option; `--param width=20` one; the default is each param's default. `MCP_URL` overrides `mcp_url`; `MCP_TIMEOUT_MS` overrides the 300 s query timeout (for a local query server running whole-catalog scans).
