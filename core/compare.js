@@ -437,17 +437,17 @@ class Compare {
         const dropped = scored.filter(v => !r.stats[v.id].separates);
         const rated = scored.filter(v => r.stats[v.id].separates);
         const groups = [...new Set(rated.map(v => v.group))].map(g => this.themes.find(t => t.id === g)).filter(Boolean);
-        const ratingRow = u => {
+        const ratingRow = (u, name = null) => {
             const h = this.headline(u), p = h.median, rank = h.rank;
             const at = Math.min(1, Math.max(0, p ?? 0)) * 100;
             const subs = groups.map(t => `<div class="sq-group"><span class="sq-label">${escapeHtml(t.label)}${R.basis && !R.basis.includes(t.id) ? `: ${escapeHtml(R.label(u.byGroup[t.id]?.rank, u.byGroup[t.id]?.median).toLowerCase())}` : ''}</span>${rated.filter(v => v.group === t.id).map(v => {
                 const m = u.metrics[v.id] || {};
                 return `<span class="sq" data-v="${v.id}" style="background:${R.color(m.rank)}"></span>`;
             }).join('')}</div>`).join('');
-            return `<div class="rating-row ${this.highlight === u.id ? 'on' : ''}" data-id="${u.id}">
+            return `<div class="rating-row ${name ? 'pooled' : this.highlight === u.id ? 'on' : ''}" data-id="${name ? '' : u.id}">
                 <div class="rating-head">
                     <span class="rank-badge" style="background:${R.color(rank)};color:${R.ink(rank)}">${rank ?? '–'}</span>
-                    <span class="farm-name">${escapeHtml(this.focalName(u.id))}</span>
+                    <span class="farm-name">${escapeHtml(name || this.focalName(u.id))}</span>
                     <span class="rating-label">${escapeHtml(R.label(rank, p))}</span>
                 </div>
                 <div class="rating-track" aria-hidden="true">${R.colors.map(c => `<span style="background:${c}"></span>`).join('')}${p == null ? '' : `<i class="marker${p < 0 ? ' below' : p > 1 ? ' beyond' : ''}" style="left:${at}%"></i>`}</div>
@@ -466,6 +466,10 @@ class Compare {
             below ? `${nUnit(below)} below ${R.floorA}` : '',
         ].filter(Boolean);
         const summary = parts.length ? `${parts.join('; ')}.`.replace(/^./, c => c.toUpperCase()) : 'No unit could be rated.';
+        // all focal units scored as one, when there is more than one
+        const pooledName = `All ${this.focalRole.label.toLowerCase()} together`;
+        const totalHa = this.sets.focal.editor.units.reduce((a, u) => a + (u.ha || 0), 0);
+        const pooledRow = units.length > 1 ? ratingRow({ ...r.pooled, id: '' }, pooledName) : '';
 
         rep.innerHTML = `
             <div class="report-head">
@@ -486,7 +490,9 @@ class Compare {
                 <div class="card-head"><h3>Ratings</h3></div>
                 <p class="rating-summary">${escapeHtml(summary)}</p>
                 <div class="rating-scale">${R.labels.map((l, i) => `<span><i style="background:${R.colors[i]}"></i>${escapeHtml(l)}</span>`).join('')}</div>
-                <div class="rating-rows">${units.map(ratingRow).join('')}</div>
+                ${pooledRow ? `<div class="rating-rows">${pooledRow}</div>
+                <p class="card-blurb">${escapeHtml(pooledName)} scores the ${units.length} ${escapeHtml(this.focalRole.label.toLowerCase())} as one area of ${escapeHtml(fmtHa(totalHa))}. On each metric it takes the value with half of that area on either side, the area-weighted median, so that one unusual ${escapeHtml((this.focalRole.singular || 'unit').toLowerCase())} cannot move it far; the rating is then taken as for a single ${escapeHtml((this.focalRole.singular || 'unit').toLowerCase())}.</p>` : ''}
+                <div class="rating-rows">${units.map(u => ratingRow(u)).join('')}</div>
                 <p class="card-blurb">Each ${escapeHtml((this.focalRole.singular || 'unit').toLowerCase())} is placed, metric by metric, between ${escapeHtml(R.floorA)} at the left of the bar and ${escapeHtml(R.ceilA)} at the right, both in the same ${escapeHtml(this.cmp.strata?.plural || 'region')}. The bar is split into five equal bands, the five ranks of the Wallacea Trust methodology, and the rating is the band of the median across ${R.basis ? `the ${escapeHtml(groups.filter(t => R.basis.includes(t.id)).map(t => t.label.toLowerCase()).join(' and '))} metrics` : 'the metrics'}. Each square is one metric. ${R.basis && groups.some(t => !R.basis.includes(t.id)) ? `${escapeHtml(groups.filter(t => !R.basis.includes(t.id)).map(t => t.label).join(' and '))} is rated separately and not counted in the headline: ${escapeHtml(this.themes.find(t => !R.basis.includes(t.id) && t.scored !== false)?.blurb || '')} ` : ''}${dropped.length ? `Not used in the ratings, because ${escapeHtml(R.floorA)} and ${escapeHtml(R.ceilA)} here score about the same on them: ${escapeHtml(dropped.map(v => v.label).join(', '))}.` : ''}</p>
                 <p class="card-blurb">These are global remote-sensing and range-map layers, not the field surveys the methodology requires, and a protected area is not a reference site under it. A rating shows how a place compares; it does not show that its management caused the difference.</p>
             </div>
@@ -566,13 +572,13 @@ class Compare {
         strip('#strip-covs', covs);
         rep.querySelector('[data-act=csv]').onclick = () => this.downloadCsv();
         rep.querySelectorAll('.rating-row').forEach(row => {
-            const u = units.find(x => x.id === row.dataset.id);
+            const u = row.dataset.id ? units.find(x => x.id === row.dataset.id) : r.pooled;
             row.querySelectorAll('.sq').forEach(sq => {
                 const v = rated.find(x => x.id === sq.dataset.v), m = u.metrics[v.id] || {};
                 hover(sq, `<b>${escapeHtml(v.label)}</b>: ${vfmt(m.value, v)}<br>${escapeHtml(R.label(m.rank, m.position))} (${posTxt(m.position)} of the way)`);
             });
         });
-        rep.querySelectorAll('.units-table tbody tr, .rating-row').forEach(tr => {
+        rep.querySelectorAll('.units-table tbody tr, .rating-row:not(.pooled)').forEach(tr => {
             tr.onclick = () => {
                 this.highlight = this.highlight === tr.dataset.id ? null : tr.dataset.id;
                 this.renderResults();
@@ -593,6 +599,11 @@ class Compare {
         for (const u of r.units) for (const v of r.vars) {
             const m = u.metrics[v.id] || {};
             lines.push([u.id, this.focalName(u.id), this.headline(u).rank, v.id, v.label, m.value, m.position, m.rank, m.floorPct, m.ceilPct, m.contrast, m.retention, m.outside?.floor ?? ''].map(q).join(','));
+        }
+        // all focal units scored as one area
+        if (r.units.length > 1) for (const v of r.vars) {
+            const m = r.pooled.metrics[v.id] || {};
+            lines.push(['all', `All ${this.focalRole.label.toLowerCase()} together`, this.headline(r.pooled).rank, v.id, v.label, m.value, m.position, m.rank, m.floorPct, m.ceilPct, m.contrast, m.retention, m.outside?.floor ?? ''].map(q).join(','));
         }
         const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
         const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `comparison-${this.country.id}.csv` });
@@ -776,6 +787,8 @@ export const compareCss = `
 .rating-row { padding: 10px 8px; border-top: 1px solid var(--line); cursor: pointer; border-radius: 6px; }
 .rating-row:hover { background: var(--hover); }
 .rating-row.on { background: var(--primary-wash); }
+.rating-row.pooled { cursor: default; border-top: 0; background: var(--hover); }
+.rating-row.pooled .farm-name { font-size: 15px; }
 .rating-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .rank-badge { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; font-weight: 700; font-size: 16px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 .farm-name { font-weight: 650; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

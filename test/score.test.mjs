@@ -1,7 +1,7 @@
 // node --test test/
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { combineStrata, midRank, median, basket, scoreUnits, rankOf } from '../core/score.js';
+import { combineStrata, midRank, median, basket, scoreUnits, rankOf, weightedMedian } from '../core/score.js';
 import { interiorPoint } from '../sources/units.js';
 
 test('midRank counts half the ties', () => {
@@ -98,4 +98,26 @@ test('position and rank place a unit between floor and ceiling medians', () => {
     assert.equal(good.metrics.flat.position, null);
     assert.equal(good.rank, 5);
     assert.equal(poor.rank, 1);
+});
+
+test('weightedMedian splits the weight in half', () => {
+    assert.equal(weightedMedian([[1, 1], [2, 1], [3, 1]]), 2);
+    assert.equal(weightedMedian([[1, 1], [2, 1]]), 1.5);
+    assert.equal(weightedMedian([[1, 1], [9, 3]]), 9);
+    assert.equal(weightedMedian([]), null);
+});
+
+test('scoreUnits: pooled scores the focal units as one, weighted by area', () => {
+    const rows = [
+        { grp: 'focal', id: 'a', stratum: 0, variable: 'x', value: 5, w: 3 },
+        { grp: 'focal', id: 'b', stratum: 0, variable: 'x', value: 3, w: 1 },
+        { grp: 'focal', id: 'c', stratum: 0, variable: 'x', value: -100, w: 1 },
+        { grp: 'floor', id: 'f', stratum: 0, variable: 'x', value: 0, w: 1 },
+        { grp: 'ceiling', id: 'c', stratum: 0, variable: 'x', value: 10, w: 1 },
+    ];
+    const r = scoreUnits(combineStrata(rows), [{ id: 'x', dir: 1 }]);
+    assert.equal(r.pooled.metrics.x.value, 5);
+    assert.equal(r.pooled.metrics.x.position, 0.5);
+    assert.equal(r.pooled.rank, 3);
+    assert.equal(r.set.metrics.x.value, 3);
 });
