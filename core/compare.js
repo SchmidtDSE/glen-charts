@@ -23,7 +23,11 @@
  *                    drawn as hexagons from their ids; the focal role may list
  *                    examples: [{ label, file, countries? }], GeoJSON files (relative
  *                    to the app) that load into the editor with one click
- *   precompute       { countries } for `precompute baselines`
+ *   precompute       { countries } for `precompute baselines` and `precompute maps`
+ *   map_cells        SQL returning (h0, h8), the resolution-8 cells of {{ISO2}}, for
+ *                    the layer overviews that `precompute maps` writes
+ *   layers_page      the page documenting each layer (e.g. "layers.html", see
+ *                    core/layers.js); each metric links to its section
  * Each theme has one query, `units`, over {{UNITS}} (sources/units.js), and a
  * `variables` list: { id, label, dir, format, unit?, default?, source?,
  * resolution?, licence? }; a theme with "scored": false holds covariates.
@@ -41,11 +45,13 @@ import { UnitSetEditor, fmtHa } from '../sources/multi-draw.js';
 import { combineStrata, scoreUnits, focalStrata, rankOf, basket } from './score.js';
 import { renderCompareStrip, compareStripCss } from '../charts/compare-strip.js';
 import { hover } from './charts.js';
+import { LayerMap, layerMapCss } from './layer-map.js';
 
 const SHELL = `
     <section id="map-wrap">
         <div id="map"></div>
-        <div class="map-legends map-overlay"><div id="map-legend" hidden></div></div>
+        <div id="layer-picker" class="map-overlay"></div>
+        <div class="map-legends map-overlay"><div id="layer-legend" hidden></div><div id="map-legend" hidden></div></div>
         <div id="map-hint" class="map-overlay" hidden></div>
     </section>
     <aside id="sidebar">
@@ -107,16 +113,31 @@ class Compare {
         this.compRoles = this.roles.filter(r => r.id !== 'focal');
 
         const style = document.createElement('style');
-        style.textContent = compareCss + compareStripCss;
+        style.textContent = compareCss + compareStripCss + layerMapCss;
         document.head.appendChild(style);
 
         this.mv = new MapView('map', app);
         this.mv.fitTo = geoms => fitGeoms(this.mv.map, geoms);
+        // one basket layer at a time on the map, picked above it
+        this.layers = new LayerMap(this.mv, {
+            query: sql => this.query(sql), base: this.base, variables: this.variables, themes: this.themes,
+            legend: this.$('#layer-legend'), aboutUrl: id => this.aboutUrl(id),
+            below: () => (this.mv.map.getLayer('cmp-cells-pt') ? 'cmp-cells-pt' : 'ref'),
+            onChange: id => {
+                const sel = this.$('#layer-select');
+                if (sel) sel.value = id || '';
+                history.replaceState(null, '', id ? `#layer=${encodeURIComponent(id)}` : location.pathname + location.search);
+            },
+        });
         this.renderControls();
         this.wireResize();
         this.renderIntro();
         await this.setCountry(cmp.default_country || this.countries[0].id);
-        this.mv.ready.then(() => this.installMapLayers());
+        this.mv.ready.then(() => {
+            this.installMapLayers();
+            const want = new URLSearchParams(location.hash.slice(1)).get('layer');
+            if (want && this.variables.some(v => v.id === want)) this.layers.show(want);
+        });
     }
 
     /* ------------------------------------------------------------ controls */
@@ -236,13 +257,31 @@ class Compare {
                         <input type="checkbox" value="${v.id}" ${this.selected.has(v.id) ? 'checked' : ''}>
                         <span>${escapeHtml(v.label)}</span>
                         ${v.licence ? `<span class="licence" title="${escapeHtml(v.licence)}">${/proprietary/i.test(v.licence) ? 'proprietary' : 'non-commercial'}</span>` : ''}
+                        ${this.aboutUrl(v.id) ? `<a class="about" href="${escapeHtml(this.aboutUrl(v.id))}" target="_blank" rel="noopener" title="What is in this layer">About</a>` : ''}
                     </label>`).join('')}
             </fieldset>`).join('');
+        box.onclick = e => { if (e.target.closest('a.about')) e.stopPropagation(); };
         box.onchange = e => {
             if (e.target.type !== 'checkbox') return;
             e.target.checked ? this.selected.add(e.target.value) : this.selected.delete(e.target.value);
             this.rescore();
         };
+    }
+
+    /** The documentation of a layer, when the app has a layers page. */
+    aboutUrl(id) {
+        return this.cmp.layers_page ? `${this.base}/${this.cmp.layers_page}#${encodeURIComponent(id)}` : null;
+    }
+
+    /** The map's layer picker: none, or any one layer of the themes that cover the country. */
+    renderLayerPicker() {
+        const box = this.$('#layer-picker');
+        const cur = this.layers.current;
+        box.innerHTML = `<label for="layer-select">Map layer</label>
+            <select id="layer-select"><option value="">None</option>${this.countryThemes().map(t => `<optgroup label="${escapeHtml(t.label)}">${(t.variables || []).map(v => `<option value="${v.id}">${escapeHtml(v.label)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+        const sel = box.querySelector('select');
+        sel.value = this.countryThemes().some(t => t.variables?.some(v => v.id === cur)) ? cur : '';
+        sel.onchange = () => this.layers.show(sel.value || null);
     }
 
     /** A role's example files for the current country, as [{ label, url }]. */
@@ -258,6 +297,9 @@ class Compare {
         this.$('#country-select').value = id;
         this.renderSetModes();
         this.sets.focal?.editor.renderExamples();
+        this.renderLayerPicker();
+        if (this.layers.current && !this.countryThemes().some(t => t.variables?.some(v => v.id === this.layers.current))) this.layers.show(null);
+        this.layers.setCountry(c);
         const [x0, y0, x1, y1] = c.bbox;
         await this.mv.ready;
         this.mv.map.fitBounds([[x0, y0], [x1, y1]], { padding: 30, duration: 700 });

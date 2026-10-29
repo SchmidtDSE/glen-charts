@@ -18,6 +18,8 @@
  *   data/sources.json                            STAC records of every dataset read
  *   data/baselines/<country>/<preset>.json       compare mode: a catalog preset's units scored
  *                                                on every theme
+ *   data/maps/<country>/<theme>.json             compare mode: every variable of a theme on the
+ *                                                country's resolution-6 hexagons, the map's overview
  *
  *   glen-charts precompute [--site <app dir>] <job> [args] [flags]
  *     lists [jur ...]
@@ -30,6 +32,8 @@
  *     baselines [country ...]       compare mode: every catalog preset's units on every theme,
  *                                   per country (default: compare.precompute.countries);
  *                                   --preset a,b limits presets, --theme a,b re-runs only those themes
+ *     maps [country ...]            compare mode: each theme's layer overview per country
+ *                                   (compare.map_cells); --theme a,b limits the themes
  *     (no job)                      lists, statewide, sources
  *   flags:
  *     --site <dir>       the app folder holding config/ and data/ (default: .)
@@ -54,6 +58,7 @@ import { loadConfig, Engine, statewideAoi, jurisdictionAoi, expand, paramKey, qu
 import { dataPaths, pathPrefix } from '../core/sources.js';
 import { McpQueryClient } from '../core/mcp.js';
 import { countryTokens, presetsFor, presetUnitsSql, withStrata, strataNamesSql } from '../sources/units.js';
+import { overviewUnitsSql, OVERVIEW_RES } from '../core/layer-map.js';
 
 register('./resolve-cdn.mjs', import.meta.url);
 
@@ -308,6 +313,41 @@ if (what === 'baselines') {
                 out.generated = new Date().toISOString();
                 await mkdir(`${root}/data/baselines/${cid}`, { recursive: true });
                 await writeFile(file, JSON.stringify(out));
+            }
+        }
+    }
+}
+
+if (what === 'maps') {
+    // Compare mode: the map's overview of every layer. Each resolution-6
+    // hexagon of the country is one unit of the theme's own query, so a
+    // hexagon's colour is what a unit of that size would score. One file per
+    // theme: { ids, values: { variable: [value per id] } }, 6 significant digits.
+    const cmp = app.compare;
+    if (!cmp?.map_cells) throw new Error('maps: app.json has no compare.map_cells');
+    const countries = JSON.parse(await fetchText(`${root}/${cmp.countries}`));
+    const ids = only.length ? only : cmp.precompute?.countries || [cmp.default_country];
+    for (const cid of ids) {
+        const country = countries.find(c => c.id === cid);
+        if (!country) { console.error(`maps: no country ${cid} in ${cmp.countries}`); continue; }
+        const ctok = countryTokens(country);
+        const UNITS = overviewUnitsSql(expand(cmp.map_cells, ctok, 'compare.map_cells'));
+        await mkdir(`${root}/data/maps/${cid}`, { recursive: true });
+        for (const theme of config.themes) {
+            if (onlyThemes && !onlyThemes.includes(theme.id)) continue;
+            if (theme.countries && !theme.countries.includes(cid)) continue;
+            const t0 = Date.now();
+            try {
+                const rows = await engine.client.query(`SELECT id, variable, value FROM (${expand(theme.sql.units, { ...ctok, UNITS }, `${theme.id}/units`)}) WHERE value IS NOT NULL ORDER BY id`);
+                const idx = new Map(), values = {};
+                for (const r of rows) if (!idx.has(r.id)) idx.set(r.id, idx.size);
+                for (const v of theme.variables || []) values[v.id] = new Array(idx.size).fill(null);
+                for (const r of rows) if (values[r.variable]) values[r.variable][idx.get(r.id)] = +Number(r.value).toPrecision(6);
+                const out = { generated: new Date().toISOString(), country: cid, theme: theme.id, res: OVERVIEW_RES, ids: [...idx.keys()], values };
+                await writeFile(`${root}/data/maps/${cid}/${theme.id}.json`, JSON.stringify(out));
+                console.log(`maps ${cid} ${theme.id}: ${idx.size} hexagons (${secs(t0)}s)`);
+            } catch (err) {
+                console.error(`maps ${cid} ${theme.id}: FAILED — ${err.message.split('\n')[0]}`);
             }
         }
     }
