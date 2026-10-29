@@ -6,9 +6,12 @@
  *   const set = new UnitSetEditor(mapView, { role, color, prefix: 'f', onChange });
  *   set.mount(containerEl);          // buttons, file input, list of units
  *   set.units                        // [{ id: 'f1', name, geometry, ha }]
+ *   set.renderExamples()             // after the list from `examples` changes
  *
  * Drawing keeps going after each shape is finished (double-click or click the
- * first point) until the reader presses Done or Escape. Ids are generated, so
+ * first point) until the reader presses Done or Escape. `examples` returns
+ * [{ label, url }] GeoJSON files offered as one-click sets, for demonstrations;
+ * loading one again replaces its shapes. Ids are generated, so
  * they are safe in SQL; names are only ever shown, never sent as SQL.
  */
 
@@ -19,8 +22,8 @@ export const MAX_VERTICES = 20000;
 const HINT = 'Click to add points; double-click or click the first point to finish a shape. Press Done when you have drawn them all.';
 
 export class UnitSetEditor {
-    constructor(mapView, { role, label = 'unit', color = '#c2410c', prefix = 'u', onChange = () => {}, showHint = () => {}, hideHint = () => {} }) {
-        Object.assign(this, { mv: mapView, role, label, color, prefix, onChange, showHint, hideHint });
+    constructor(mapView, { role, label = 'unit', color = '#c2410c', prefix = 'u', examples = () => [], onChange = () => {}, showHint = () => {}, hideHint = () => {} }) {
+        Object.assign(this, { mv: mapView, role, label, color, prefix, examples, onChange, showHint, hideHint });
         this.units = [];
         this.n = 0;
         this.drawing = false;
@@ -41,6 +44,7 @@ export class UnitSetEditor {
                 <label class="ghost-btn upload">Upload GeoJSON<input type="file" accept=".geojson,.json,application/geo+json,application/json" hidden></label>
                 <button class="ghost-btn" data-act="clear" type="button" disabled>Clear</button>
             </div>
+            <div class="draw-row examples" hidden></div>
             <div class="step-help unit-msg"></div>
             <ul class="unit-list"></ul>`;
         this.msg = el.querySelector('.unit-msg');
@@ -59,7 +63,32 @@ export class UnitSetEditor {
                 this.message(err.message, true);
             }
         };
+        this.renderExamples();
         this.render();
+    }
+
+    renderExamples() {
+        const row = this.el?.querySelector('.examples');
+        if (!row) return;
+        const list = this.examples();
+        row.hidden = !list.length;
+        row.innerHTML = list.map((x, i) => `<button class="ghost-btn" type="button" data-i="${i}">${escapeHtml(x.label)}</button>`).join('');
+        row.onclick = async e => {
+            const b = e.target.closest('button');
+            if (!b) return;
+            const x = list[+b.dataset.i];
+            try {
+                const res = await fetch(x.url);
+                if (!res.ok) throw new Error(`Could not load ${x.label} (${res.status}).`);
+                const feats = geoJsonFeatures(await res.json(), this.label);
+                this.units = this.units.filter(u => u.example !== x.url);
+                this.add(feats, x.url);
+                this.message(`Loaded ${feats.length} ${feats.length === 1 ? 'shape' : 'shapes'} from ${x.label}.`);
+                this.mv.fitTo?.(this.units.map(u => u.geometry));
+            } catch (err) {
+                this.message(err.message, true);
+            }
+        };
     }
 
     startDrawing() {
@@ -81,7 +110,7 @@ export class UnitSetEditor {
         if (b) { b.textContent = 'Draw'; b.classList.remove('active'); }
     }
 
-    add(feats) {
+    add(feats, example = null) {
         const total = [...this.units, ...feats].reduce((n, f) => n + vertexCount(f.geometry), 0);
         if (total > MAX_VERTICES) {
             this.message(`These shapes have ${total.toLocaleString()} vertices in all; please simplify them to under ${MAX_VERTICES.toLocaleString()}.`, true);
@@ -89,7 +118,7 @@ export class UnitSetEditor {
         }
         for (const f of feats) {
             this.n += 1;
-            this.units.push({ id: `${this.prefix}${this.n}`, name: f.name, geometry: f.geometry, ha: areaHa(f.geometry) });
+            this.units.push({ id: `${this.prefix}${this.n}`, name: f.name, geometry: f.geometry, ha: areaHa(f.geometry), ...(example && { example }) });
         }
         this.changed();
     }
@@ -138,6 +167,11 @@ export async function readGeoJsonFeatures(file, label = 'unit') {
     if (file.size > 50e6) throw new Error('File is larger than 50 MB; simplify it first.');
     let gj;
     try { gj = JSON.parse(await file.text()); } catch { throw new Error('Not a GeoJSON file.'); }
+    return geoJsonFeatures(gj, label);
+}
+
+/** Polygon features of a parsed GeoJSON object: [{ name, geometry }]. */
+export function geoJsonFeatures(gj, label = 'unit') {
     const out = [];
     const nameOf = (p, i) => {
         const k = p && Object.keys(p).find(k => /^(name|nombre|nom|farm|farm_name|id|code|codigo)$/i.test(k));
