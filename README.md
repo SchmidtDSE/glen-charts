@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.4.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.4.1**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.0/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.1/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.0/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.1/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -227,11 +227,12 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 - Each theme has one query, `units`, over `{{UNITS}}`: a relation of `(grp, id, stratum, cell)` rows with cells at resolution 8, 9 or 10. It returns one row per `(grp, id, stratum, variable)` with `value`, the area-weighted mean over the unit's cells in that stratum, and `w`, the area behind it. The theme lists its `variables`: `{ id, label, dir, format, unit?, default?, source?, resolution?, licence?, range_check? }`. A theme with `"scored": false` holds covariates, which are shown and checked against each set's range but not scored.
 - Drawn and uploaded polygons are filled with resolution-10 cells on the query server; a polygon smaller than one cell gets the cell under an interior point. A run resolves the live units once and writes their cells into each theme query as a literal.
 - Catalog presets are read from `precompute baselines` files when they exist, and run live otherwise.
+- Each focal unit is rated on five bands from the floor median (rank 1) to the ceiling median (rank 5), the quintile ranks of the Wallacea Trust methodology. `compare.rating` sets `basis` (the theme ids the headline rating uses; the other scored themes are rated beside it), and optionally `colors` and `labels`; labels name each role's `anchor` through `{floor}` and `{ceiling}`. A metric whose floor and ceiling medians are too close to separate is left out of the ratings.
 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.4.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.4.1 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
