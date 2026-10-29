@@ -178,7 +178,8 @@ An app may add an assistant beside the report. It is optional: the explorer impo
 ```
 
 - The models may come from `config.json` next to the page instead (`llm_models`, `llm_model`), so a deployment can point at a server-side proxy and keep keys out of the app.
-- The agent loop is geo-agent's (`agent.js` and `tool-registry.js`, which touch no DOM), loaded from `agent_url` (default: geo-agent v3.36.0 on jsDelivr).
+- The agent loop and the chat interface are [glen-harness](https://github.com/SchmidtDSE/glen-harness)'s, loaded from `harness_url` (default: glen-harness v0.1.0 on jsDelivr). It is the chat geo-agent apps show: a stop button (and Esc) to end a turn, each turn's tool calls and SQL in a collapsible list, a model selector and the auto-approve and reasoning toggles. Its colours follow the app's `--primary`. A development page can set `window.GLEN_HARNESS` to a local checkout.
+- The chat's session export is off by default, because its SQL holds the area tokens unexpanded; `"export": true` turns it on.
 - The assistant's tools work through the explorer's own query engine: `query` (SQL, with the area tokens `{{AOI}}`, `{{AOI10}}`, `{{ID}}`, `{{KIND}}` and every param expanded for the chosen area), `current_view` (the area, settings and every panel's current results), `add_card`, `select_area` and `set_param`.
 - `add_card` shows a result as a table or a bar chart in the chat. **Add to report** turns it into a report panel whose SQL re-runs for each area the reader picks, with its SQL under "Method & SQL" like any other panel.
 - The system prompt describes the tools and tokens, lists every panel's SQL template so the model can reuse its datasets and joins, and appends the app's own `system_prompt` file.

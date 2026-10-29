@@ -7,15 +7,16 @@
  *     "title": "Chat",
  *     "system_prompt": "config/chat.md",      // app guidance, appended to the built-in prompt
  *     "examples": ["…", "…"],                 // suggested questions
+ *     "welcome": "…",
  *     "llm_models": [{ "value", "label", "endpoint", "api_key" }], "llm_model": "…",
- *     "agent_url": "https://cdn.jsdelivr.net/gh/boettiger-lab/geo-agent@v3.36.0/app"
+ *     "harness_url": "https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0"
  *   }
  *
  * The models may instead come from the page's config.json (llm_models,
  * llm_model), which a deployment writes at start so no key is in the app.
  *
- * The agent loop and tool registry are geo-agent's (agent.js and
- * tool-registry.js, which touch no DOM), loaded from agent_url. The tools are
+ * The agent loop, tool registry and chat interface are glen-harness's (the
+ * same chat geo-agent apps show), loaded from harness_url. The tools are
  * glen's own, over the explorer's query engine:
  *   query         run SQL; area tokens ({{AOI10}}, {{ID}}, params …) are expanded for the chosen area
  *   current_view  the chosen area, settings, panels and their current results
@@ -29,7 +30,7 @@ import { renderBarChart } from './charts.js';
 import { fmt, escapeHtml } from './format.js';
 import { optionValue, optionLabel } from './engine.js';
 
-const GEO_AGENT = 'https://cdn.jsdelivr.net/gh/boettiger-lab/geo-agent@v3.36.0/app';
+const HARNESS = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0';
 const MAX_ROWS = 100;          // rows of a query result passed back to the model
 const MAX_CHARS = 20000;
 
@@ -46,103 +47,72 @@ class Chat {
         this.spec = this.app.chat || {};
         this.pinned = [];                       // card specs added to the report
         this.cards = new Map();                 // id → { spec, rows } shown in chat
-        this.busy = false;
     }
 
     async init() {
-        const sidebar = this.ex.$('#sidebar');
         const dock = this.dock = document.createElement('section');
         dock.className = 'chat-dock compact';      // header and input only, until the reader uses it
         dock.innerHTML = `
             <div class="chat-head">
                 <b>${escapeHtml(this.spec.title || 'Chat')}</b>
-                <span class="chat-head-right">
-                    <select class="chat-model" aria-label="Model" hidden></select>
-                    <button type="button" class="ghost-btn chat-toggle">Hide</button>
-                </span>
+                <button type="button" class="ghost-btn chat-toggle">Show</button>
             </div>
-            <div class="chat-body">
-                <div class="chat-log" aria-live="polite"></div>
-                <div class="chat-examples"></div>
-                <form class="chat-form">
-                    <input type="text" autocomplete="off" placeholder="${escapeHtml(this.spec.placeholder || 'Ask a question')}" aria-label="Message">
-                    <button type="submit" class="chat-send">Send</button>
-                </form>
-            </div>`;
-        sidebar.appendChild(dock);
-        this.log = dock.querySelector('.chat-log');
-        this.input = dock.querySelector('input');
+            <div class="chat-body"></div>`;
+        this.ex.$('#sidebar').appendChild(dock);
+        const body = dock.querySelector('.chat-body');
         const toggle = dock.querySelector('.chat-toggle');
-        toggle.textContent = 'Show';
         this.expand = (open = true) => {
             dock.classList.toggle('compact', !open);
             toggle.textContent = open ? 'Hide' : 'Show';
         };
         toggle.onclick = () => this.expand(dock.classList.contains('compact'));
-        this.input.addEventListener('focus', () => this.expand(true));
-        dock.querySelector('form').onsubmit = e => { e.preventDefault(); this.send(this.input.value); };
-        const ex = dock.querySelector('.chat-examples');
-        ex.innerHTML = (this.spec.examples || []).map((q, i) => `<button type="button" data-i="${i}">${escapeHtml(q)}</button>`).join('');
-        ex.onclick = e => { const b = e.target.closest('button'); if (b) this.send(this.spec.examples[+b.dataset.i]); };
 
         const rt = this.ex.runtime || {};
         const models = rt.llm_models || this.spec.llm_models || [];
         if (!models.length) {
-            this.note('No language model is configured for this app, so the chat is off.');
-            dock.querySelector('form').hidden = true;
-            ex.hidden = true;
+            body.innerHTML = '<p class="chat-off">No language model is configured for this app, so the chat is off.</p>';
             return;
         }
-        const base = (this.spec.agent_url || GEO_AGENT).replace(/\/$/, '');
-        const [{ Agent }, { ToolRegistry }] = await Promise.all([import(`${base}/agent.js`), import(`${base}/tool-registry.js`)]);
-        this.registry = new ToolRegistry({ memoTools: [] });
-        for (const t of this.tools()) this.registry.registerLocal(t);
-        this.agent = new Agent({
+        // window.GLEN_HARNESS points a development page at a local checkout
+        const base = (this.spec.harness_url || globalThis.GLEN_HARNESS || HARNESS).replace(/\/$/, '');
+        const [{ Agent, ToolRegistry }, { ChatUI, buildChatPanel, loadChatDeps }] = await Promise.all([
+            import(`${base}/src/index.js`), import(`${base}/ui/index.js`), this.loadGuidance(),
+        ]);
+        await loadChatDeps();
+
+        const registry = new ToolRegistry({ memoTools: [] });
+        for (const t of this.tools()) registry.registerLocal(t);
+        const chat = this;
+        // The system prompt carries the current area and settings, so it is rebuilt for every message.
+        class GlenAgent extends Agent {
+            processMessage(text) {
+                this.setSystemPrompt(chat.systemPrompt());
+                return super.processMessage(text);
+            }
+        }
+        const config = {
             llm_models: models,
             llm_model: rt.llm_model || this.spec.llm_model || models[0].value,
             auto_approve: true,
             max_tool_calls: this.spec.max_tool_calls ?? 15,
-        }, this.registry);
-        const sel = dock.querySelector('.chat-model');
-        if (models.length > 1) {
-            sel.innerHTML = models.map(m => `<option value="${escapeHtml(m.value)}">${escapeHtml(m.label || m.value)}</option>`).join('');
-            sel.value = this.agent.selectedModel;
-            sel.onchange = () => this.agent.setModel(sel.value);
-            sel.hidden = false;
-        }
+            // the report's code chunks would hold unexpanded area tokens, so export is off unless asked for
+            export: this.spec.export ?? false,
+            welcome: { message: this.spec.welcome || '', examples: this.spec.examples || [] },
+        };
+        const version = import.meta.url.match(/glen-charts@([^/]+)/)?.[1] || 'dev';
+        this.agent = new GlenAgent(config, registry, { clientName: `glen-charts/${version}` });
+        const mount = buildChatPanel(body, { placeholder: this.spec.placeholder || 'Ask a question' });
+        this.ui = new ChatUI(this.agent, config, mount);
+        mount.input.addEventListener('focus', () => this.expand(true));
+        mount.messages.addEventListener('click', e => { if (e.target.closest('.welcome-example-btn')) this.expand(true); });
+    }
+
+    async loadGuidance() {
         this.guidance = this.spec.system_prompt
             ? await fetch(`${this.ex.base}/${this.spec.system_prompt}`, { cache: 'no-cache' }).then(r => (r.ok ? r.text() : '')).catch(() => '')
             : '';
-        this.agent.onThinkingStart = () => this.thinking(true);
-        this.agent.onThinkingEnd = () => this.thinking(false);
-        this.agent.onToolExecuting = calls => this.showCalls(calls);
-        this.agent.onError = err => this.note(`Error: ${err?.message || err}`, 'err');
-        this.agent.onCheckpoint = summary => this.say(summary);
-        if (this.spec.welcome) this.say(this.spec.welcome);
     }
 
-    /* ---------------------------------------------------------------- turn */
-
-    async send(text) {
-        text = String(text || '').trim();
-        if (!text || this.busy || !this.agent) return;
-        this.input.value = '';
-        this.expand(true);
-        this.busy = true;
-        this.dock.classList.add('busy');
-        this.add(`<div class="msg user">${escapeHtml(text)}</div>`);
-        this.agent.setSystemPrompt(this.systemPrompt());
-        try {
-            const out = await this.agent.processMessage(text);
-            if (out?.response) this.say(out.response);
-        } catch (err) {
-            this.note(`Error: ${err.message}`, 'err');
-        } finally {
-            this.thinking(false);
-            this.busy = false;
-            this.dock.classList.remove('busy');
-        }
-    }
 
     systemPrompt() {
         const ex = this.ex, app = this.app, s = ex.state;
@@ -287,30 +257,12 @@ ${this.stateText()}`;
 
     /* ------------------------------------------------------------- display */
 
-    add(html) {
-        this.log.insertAdjacentHTML('beforeend', html);
-        this.log.scrollTop = this.log.scrollHeight;
-        return this.log.lastElementChild;
-    }
-    say(text) { this.add(`<div class="msg bot">${mdLite(text)}</div>`); }
-    note(text, cls = '') { this.add(`<div class="msg note ${cls}">${escapeHtml(text)}</div>`); }
-    thinking(on) {
-        this.log.querySelector('.thinking')?.remove();
-        if (on) this.add('<div class="msg thinking">Thinking…</div>');
-    }
-    showCalls(calls) {
-        for (const c of calls || []) {
-            let args = {};
-            try { args = typeof c.function?.arguments === 'string' ? JSON.parse(c.function.arguments) : c.function?.arguments || {}; } catch { /* shown raw */ }
-            const name = c.function?.name || c.name;
-            const label = { query: 'Ran a query', current_view: 'Read the panels', add_card: 'Made a card', select_area: 'Chose an area', set_param: 'Changed a setting' }[name] || name;
-            this.add(`<details class="msg call"><summary>${escapeHtml(label)}</summary>${args.sql ? `<pre>${escapeHtml(args.sql)}</pre>` : `<pre>${escapeHtml(JSON.stringify(args, null, 1))}</pre>`}</details>`);
-        }
-    }
-
     showCard(id) {
         const { spec, rows } = this.cards.get(id);
-        const el = this.add(`<div class="msg card-msg"><section class="card chat-card"><h4>${escapeHtml(spec.title)}</h4>${spec.note ? `<p class="card-blurb">${escapeHtml(spec.note)}</p>` : ''}<div class="plot"></div></section><button type="button" class="ghost-btn chat-pin">Add to report</button></div>`);
+        const el = document.createElement('div');
+        el.className = 'chat-message assistant card-msg';
+        el.innerHTML = `<section class="card chat-card"><h4>${escapeHtml(spec.title)}</h4>${spec.note ? `<p class="card-blurb">${escapeHtml(spec.note)}</p>` : ''}<div class="plot"></div></section><button type="button" class="ghost-btn chat-pin">Add to report</button>`;
+        this.ui.addElement(el);
         renderCardBody(el.querySelector('.plot'), spec, rows);
         const b = el.querySelector('.chat-pin');
         b.onclick = () => {
@@ -378,18 +330,4 @@ export function renderCardBody(el, spec, rows) {
 function clip(obj) {
     const s = JSON.stringify(obj);
     return s.length > MAX_CHARS ? s.slice(0, MAX_CHARS) + '… [truncated]' : s;
-}
-
-/** Minimal markdown: paragraphs, - lists, **bold**, `code`, [text](url) and bare URLs. */
-export function mdLite(text) {
-    const inline = t => escapeHtml(t)
-        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-        .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
-    return String(text || '').trim().split(/\n{2,}/).map(block => {
-        const lines = block.split('\n');
-        if (lines.every(l => /^\s*[-*] /.test(l))) return `<ul>${lines.map(l => `<li>${inline(l.replace(/^\s*[-*] /, ''))}</li>`).join('')}</ul>`;
-        return `<p>${lines.map(inline).join('<br>')}</p>`;
-    }).join('');
 }
