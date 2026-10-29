@@ -36,7 +36,8 @@
  *     --theme a,b        areas: re-run only these themes in files already written
  *     --param id=v       a param value; id=all for every option (default: each param's default)
  *     --force            areas: rewrite files already written
- *   env: MCP_URL overrides app.mcp_url; MCP_TIMEOUT_MS overrides the 300 s query timeout
+ *   env: MCP_URL overrides app.mcp_url; MCP_BEARER sends a bearer token (a private replica);
+ *        MCP_TIMEOUT_MS overrides the 300 s query timeout
  *        (for a local query server running whole-catalog scans).
  *
  * An app's extensions module (app.json "extensions", e.g. "app/extensions.js")
@@ -85,7 +86,12 @@ if (app.extensions) {
     ({ tokens = {}, overlays = [] } = mod.default || mod);
 }
 const mcpUrl = process.env.MCP_URL || app.mcp_url;
-const client = process.env.MCP_TIMEOUT_MS ? new McpQueryClient(mcpUrl, { timeoutMs: Number(process.env.MCP_TIMEOUT_MS) }) : null;
+// MCP_BEARER: a bearer token for a private replica (e.g. through kubectl port-forward)
+const clientOpts = {
+    ...(process.env.MCP_TIMEOUT_MS ? { timeoutMs: Number(process.env.MCP_TIMEOUT_MS) } : {}),
+    ...(process.env.MCP_BEARER ? { headers: { Authorization: `Bearer ${process.env.MCP_BEARER}` } } : {}),
+};
+const client = Object.keys(clientOpts).length ? new McpQueryClient(mcpUrl, clientOpts) : null;
 const engine = new Engine(config, { mcpUrl, client, dataBase: null, tokens });
 const combos = paramCombos(app, paramPick);
 const allThemes = [config.overview, ...config.themes].filter(Boolean);
@@ -271,6 +277,7 @@ if (what === 'baselines') {
                 const UNITS = withStrata([part], cmp.strata);
                 for (const theme of config.themes) {
                     if (onlyThemes && !onlyThemes.includes(theme.id)) continue;
+                    if (theme.countries && !theme.countries.includes(cid)) continue;
                     t0 = Date.now();
                     try {
                         const rows = await engine.client.query(expand(theme.sql.units, { ...ctok, UNITS }, `${theme.id}/units`));

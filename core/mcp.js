@@ -11,9 +11,11 @@
 let _id = 0;
 
 export class McpQueryClient {
-    constructor(url, { timeoutMs = 300000 } = {}) {
+    /** headers: extra request headers, e.g. { Authorization: 'Bearer …' } for a private replica (Node only; never put a secret in browser code). */
+    constructor(url, { timeoutMs = 300000, headers = {} } = {}) {
         this.url = url;
         this.timeoutMs = timeoutMs;
+        this.headers = headers;
     }
 
     async callTool(name, args) {
@@ -25,6 +27,7 @@ export class McpQueryClient {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json, text/event-stream',
+                    ...this.headers,
                 },
                 body: JSON.stringify({
                     jsonrpc: '2.0', id: ++_id, method: 'tools/call',
