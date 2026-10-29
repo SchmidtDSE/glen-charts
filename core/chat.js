@@ -52,7 +52,7 @@ class Chat {
     async init() {
         const sidebar = this.ex.$('#sidebar');
         const dock = this.dock = document.createElement('section');
-        dock.className = 'chat-dock';
+        dock.className = 'chat-dock compact';      // header and input only, until the reader uses it
         dock.innerHTML = `
             <div class="chat-head">
                 <b>${escapeHtml(this.spec.title || 'Chat')}</b>
@@ -72,10 +72,14 @@ class Chat {
         sidebar.appendChild(dock);
         this.log = dock.querySelector('.chat-log');
         this.input = dock.querySelector('input');
-        dock.querySelector('.chat-toggle').onclick = e => {
-            dock.classList.toggle('collapsed');
-            e.target.textContent = dock.classList.contains('collapsed') ? 'Show' : 'Hide';
+        const toggle = dock.querySelector('.chat-toggle');
+        toggle.textContent = 'Show';
+        this.expand = (open = true) => {
+            dock.classList.toggle('compact', !open);
+            toggle.textContent = open ? 'Hide' : 'Show';
         };
+        toggle.onclick = () => this.expand(dock.classList.contains('compact'));
+        this.input.addEventListener('focus', () => this.expand(true));
         dock.querySelector('form').onsubmit = e => { e.preventDefault(); this.send(this.input.value); };
         const ex = dock.querySelector('.chat-examples');
         ex.innerHTML = (this.spec.examples || []).map((q, i) => `<button type="button" data-i="${i}">${escapeHtml(q)}</button>`).join('');
@@ -123,6 +127,7 @@ class Chat {
         text = String(text || '').trim();
         if (!text || this.busy || !this.agent) return;
         this.input.value = '';
+        this.expand(true);
         this.busy = true;
         this.dock.classList.add('busy');
         this.add(`<div class="msg user">${escapeHtml(text)}</div>`);
@@ -160,7 +165,7 @@ Area types: ${types}${ex.ext.sources.length ? `, and ${ex.ext.sources.map(x => x
 Tools:
 - current_view: the chosen area, settings and every panel's current results. Call it first when the question is about what the reader sees.
 - query: run SQL and read the rows. Keep results small: aggregate, and LIMIT lists.
-- add_card: show a result to the reader as a table or a bar chart. Use it whenever a table or chart helps; the reader can add the card to the report, where it re-runs for every area they pick, so write its SQL with the area tokens rather than with a fixed id where the question is about the chosen area.
+- add_card: show a result to the reader as a table or a bar chart. Use it whenever a table or chart helps; the reader can add the card to the report, where it re-runs for every area they pick, so write its SQL with the area tokens rather than with a fixed id where the question is about the chosen area, and do not name the area in its title or note. Select only the columns the reader needs, with readable names.
 - select_area, set_param: change the area or a setting when the reader asks to.
 
 Style: answer in a few plain sentences, with units, and say what the numbers cover. If a question cannot be answered from the data, say so.
@@ -364,7 +369,8 @@ export function renderCardBody(el, spec, rows) {
         return;
     }
     const cols = Object.keys(rows[0]).slice(0, 8);
-    const cell = v => (typeof v === 'number' ? fmt(v, Number.isInteger(v) ? 'int' : 'num1') : v === null || v === undefined ? '—' : escapeHtml(Array.isArray(v) ? v.join('; ') : String(v)));
+    const cell = v => (typeof v === 'number' ? fmt(v, Number.isInteger(v) ? 'int' : 'num1') : v === null || v === undefined ? '—'
+        : escapeHtml(Array.isArray(v) ? v.join('; ') : String(v).replace(/^(\d{4}-\d{2}-\d{2})[ T]00:00:00(\.0+)?Z?$/, '$1')));
     el.innerHTML = `<div class="table-wrap"><table class="chat-table"><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(0, 50).map(r => `<tr>${cols.map(c => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${cell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${rows.length > 50 ? `<div class="sub">First 50 of ${rows.length} rows.</div>` : ''}`;
 }
 

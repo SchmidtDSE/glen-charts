@@ -332,8 +332,8 @@ details.method pre {
 
 /* ----- chat (app.chat) --------------------------------------------------- */
 .chat-dock { flex: 0 0 auto; height: var(--chat-height, 32%); min-height: 0; display: flex; flex-direction: column; border-top: 2px solid var(--line-strong); background: var(--surface); }
-.chat-dock.collapsed { height: auto; }
-.chat-dock.collapsed .chat-body { display: none; }
+.chat-dock.compact { height: auto; }
+.chat-dock.compact .chat-log, .chat-dock.compact .chat-examples { display: none; }
 .chat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--line); }
 .chat-head b { font-size: 14px; }
 .chat-head-right { display: flex; gap: 6px; align-items: center; }
