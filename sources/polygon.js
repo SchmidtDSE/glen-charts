@@ -5,6 +5,8 @@
  * The cells are res 10 (sql10); sql is their res-8 parents.
  */
 
+import { interiorPoint } from './units.js';
+
 /** GeoJSON Polygon/MultiPolygon → list of WKT POLYGON strings (holes kept). */
 export function geometryToWktPolygons(geom) {
     const polys = geom.type === 'Polygon' ? [geom.coordinates]
@@ -19,10 +21,18 @@ function closeRing(r) {
     return a[0] === b[0] && a[1] === b[1] ? r : [...r, a];
 }
 
-/** AOI from arbitrary polygons (drawn / uploaded GeoJSON). */
+/**
+ * AOI from arbitrary polygons (drawn / uploaded GeoJSON). A polygon smaller
+ * than one res-10 cell (about 1.5 ha, so many parcels) covers no cell centre;
+ * it gets the cell under an interior point instead.
+ */
 export function polygonAoi(geometries, label) {
-    const ws = geometries.flatMap(geometryToWktPolygons).map(w => `('${w}')`);
-    const sql10 = `SELECT DISTINCT h3_cell_to_parent(c, 0) AS h0, h3_cell_to_parent(c, 8) AS h8, c AS h10 FROM (SELECT unnest(h3_polygon_wkt_to_cells(wkt, 10)) AS c FROM (VALUES ${ws.join(', ')}) t(wkt))`;
+    const ws = geometries.flatMap(g => (g.type === 'MultiPolygon' ? g.coordinates.map(c => ({ type: 'Polygon', coordinates: c })) : [g]))
+        .flatMap(g => geometryToWktPolygons(g).map(w => {
+            const [x, y] = interiorPoint(g);
+            return `('${w}', ${y.toFixed(6)}, ${x.toFixed(6)})`;
+        }));
+    const sql10 = `SELECT DISTINCT h3_cell_to_parent(c, 0) AS h0, h3_cell_to_parent(c, 8) AS h8, c AS h10 FROM (SELECT unnest(CASE WHEN len(cs) = 0 THEN [h3_latlng_to_cell(lat, lng, 10)] ELSE cs END) AS c FROM (SELECT h3_polygon_wkt_to_cells(wkt, 10) AS cs, lat, lng FROM (VALUES ${ws.join(', ')}) t(wkt, lat, lng)))`;
     return { key: `poly:${hash(ws.join())}`, kind: 'polygon', label, sql10, sql: `SELECT DISTINCT h0, h8 FROM (${sql10})` };
 }
 

@@ -20,7 +20,9 @@
  *                       countries?, sql, map? }] }] — a preset's sql returns
  *                    (id, name, cell); map is { pmtiles, source_layer, id_prop }
  *                    for units drawn from a tile set, else single-cell units are
- *                    drawn as hexagons from their ids
+ *                    drawn as hexagons from their ids; the focal role may list
+ *                    examples: [{ label, file, countries? }], GeoJSON files (relative
+ *                    to the app) that load into the editor with one click
  *   precompute       { countries } for `precompute baselines`
  * Each theme has one query, `units`, over {{UNITS}} (sources/units.js), and a
  * `variables` list: { id, label, dir, format, unit?, default?, source?,
@@ -159,7 +161,7 @@ class Compare {
             </div>`;
 
         const hint = { showHint: t => this.showHint(t), hideHint: () => this.hideHint() };
-        const focalEd = new UnitSetEditor(this.mv, { role: 'focal', label: (this.focalRole.singular || 'unit').toLowerCase(), color: this.focalRole.color, prefix: 'f', onChange: () => this.setsChanged(), ...hint });
+        const focalEd = new UnitSetEditor(this.mv, { role: 'focal', label: (this.focalRole.singular || 'unit').toLowerCase(), color: this.focalRole.color, prefix: 'f', examples: () => this.examplesFor(this.focalRole), onChange: () => this.setsChanged(), ...hint });
         focalEd.mount(this.$('#step-focal .set-editor'));
         this.sets.focal = { mode: 'custom', editor: focalEd };
         this.compRoles.forEach((r, i) => {
@@ -243,12 +245,19 @@ class Compare {
         };
     }
 
+    /** A role's example files for the current country, as [{ label, url }]. */
+    examplesFor(role) {
+        return (role.examples || []).filter(x => !x.countries || x.countries.includes(this.country?.id))
+            .map(x => ({ label: x.label, url: new URL(x.file, new URL(`${this.base}/`, location.href)).href }));
+    }
+
     async setCountry(id) {
         const c = this.countries.find(k => k.id === id);
         if (!c) return;
         this.country = c;
         this.$('#country-select').value = id;
         this.renderSetModes();
+        this.sets.focal?.editor.renderExamples();
         const [x0, y0, x1, y1] = c.bbox;
         await this.mv.ready;
         this.mv.map.fitBounds([[x0, y0], [x1, y1]], { padding: 30, duration: 700 });

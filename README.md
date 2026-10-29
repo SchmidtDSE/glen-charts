@@ -1,10 +1,10 @@
 # glen-charts
 
-A library for small, static web apps that profile an area: pick a place, or a whole region, and see a set of themed panels (headline numbers, charts, rankings) computed with fixed SQL over the cloud-native DuckDB geo catalog. No AI model is involved; every number is SQL you can read, export and re-run in R or Python.
+A library for small, static web apps that profile an area: pick a place, or a whole region, and see a set of themed panels (headline numbers, charts, rankings) computed with fixed SQL over the cloud-native DuckDB geo catalog. Every panel is SQL you can read, export and re-run in R or Python. No AI model is involved unless an app adds the optional [chat](#chat), whose answers show the SQL they ran.
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.4.2**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.5.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.2/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.3/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.2/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.3/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -56,6 +56,8 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
 | `extensions` | path of the app's extension module, for the precompute CLI |
 | `data_base` | folder holding `data/`, when a site variant shares another's |
+| `pages` | extra tabs that show an HTML file, e.g. an About page: `[{ "id": "about", "label": "About", "file": "config/about.html", "full": true, "sources": true }]`. `full` hides the map and gives the panel the whole width; `sources` appends the citations of every dataset the app queries, from `data/sources.json` (`precompute sources`). The tab is kept in the link (`?view=about`) |
+| `chat` | an optional assistant; see [Chat](#chat). Without this block no LLM code loads |
 | `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them |
 
 An area type:
@@ -83,6 +85,8 @@ An area type:
 ```json
 "params": [{ "id": "width", "label": "Band width", "token": "WIDTH", "options": [5, 10, 20, 50], "default": 10, "format": "{} km" }]
 ```
+
+A query that does not depend on every param says which it uses: `"queries": { "site": { "file": "site.sql", "params": [] } }`. Its precomputed files and the whole-region file are then keyed by those params only, so `precompute` runs it once rather than once per combination, and changing an unrelated setting never sends it to a live query.
 
 A param is drawn as a segmented control (or, with `"control": "slider"`, as a slider over its options, for ordered settings such as a resolution), kept in the link (`?width=20`), expanded as `{{WIDTH}}` in every SQL template (area, list and theme), and part of every cache key and precomputed file path. Its value is always one of its options, so it is safe in SQL. An option may be `{ "value": ..., "label": ... }`.
 
@@ -158,6 +162,27 @@ Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{A
 - `default: true` makes the leaderboard the landing view (a link without `view=leaderboard` still opens the profile it names).
 - The view and any non-default scoring are kept in the URL (`?view=leaderboard&score=scope=priority;carbon=2;carbon.irrecoverable_mt=-1`), so a re-weighted view is a link. The CSV download records the scoring it used.
 
+## Chat
+
+An app may add an assistant beside the report. It is optional: the explorer imports `core/chat.js` only when `app.json` has a `chat` block, so an app without one loads no LLM code and every panel stays fixed, reviewable SQL.
+
+```json
+"chat": {
+  "title": "Chat",
+  "system_prompt": "config/chat.md",
+  "examples": ["Which of these grants have no match requirement?"],
+  "welcome": "Ask about this area.",
+  "llm_models": [{ "value": "model-id", "label": "Model", "endpoint": "/api/llm", "api_key": "unused" }],
+  "llm_model": "model-id"
+}
+```
+
+- The models may come from `config.json` next to the page instead (`llm_models`, `llm_model`), so a deployment can point at a server-side proxy and keep keys out of the app.
+- The agent loop is geo-agent's (`agent.js` and `tool-registry.js`, which touch no DOM), loaded from `agent_url` (default: geo-agent v3.36.0 on jsDelivr).
+- The assistant's tools work through the explorer's own query engine: `query` (SQL, with the area tokens `{{AOI}}`, `{{AOI10}}`, `{{ID}}`, `{{KIND}}` and every param expanded for the chosen area), `current_view` (the area, settings and every panel's current results), `add_card`, `select_area` and `set_param`.
+- `add_card` shows a result as a table or a bar chart in the chat. **Add to report** turns it into a report panel whose SQL re-runs for each area the reader picks, with its SQL under "Method & SQL" like any other panel.
+- The system prompt describes the tools and tokens, lists every panel's SQL template so the model can reuse its datasets and joins, and appends the app's own `system_prompt` file.
+
 ## Extensions
 
 What configuration cannot express, an app passes to `createExplorer({ extensions })` from its own module (`app/extensions.js`, also named in `app.json` `extensions` so the CLI gets its tokens and cites its overlays; the CLI imports it under Node, so it must not touch `document` or `maplibregl` at load time):
@@ -170,6 +195,7 @@ export default {
   sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
+  views:    [{ id, label, full, render(el, ctx) }],             // extra tabs drawn by the app; ctx = { engine, app, explorer }
 };
 ```
 
@@ -179,7 +205,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 
 A source adds an area mode with its own controls. The library ships two:
 
-- `sources/polygon-source.js`, `polygonSource()`: draw a polygon or upload GeoJSON. Not kept in the link.
+- `sources/polygon-source.js`, `polygonSource()`: draw a polygon or upload GeoJSON. Not kept in the link. A polygon smaller than one resolution-10 cell (about 1.5 ha, so many parcels) gets the cell under an interior point.
 - `sources/isochrone-source.js`, `isochroneSource()`: the area reachable from a point (map click or address search) by walking, cycling or driving within a time budget, from a [Valhalla](https://github.com/valhalla/valhalla) router. Its bands add `{{BANDS10}}` (every cell with the smallest band that reaches it), `{{ORIGIN_LAT}}` and `{{ORIGIN_LON}}` to theme SQL, and the point, mode and time are kept in the link (`#@37.8,-122.27?mode=walk&t=15`). Configured in `app.json`:
 
   ```json
@@ -225,6 +251,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 - A preset's `sql` returns `(id, name, cell)`, one row per H3 cell of each unit. `map: { pmtiles, source_layer, id_prop, name_prop }` draws its units from a tile set; otherwise single-cell units are drawn as hexagons from their ids, which needs [h3-js](https://github.com/uber/h3-js).
 - `strata.sql` returns `(h0, h8, stratum, name)`. With the "strata" landscape, comparison units count only in the strata the focal units touch.
 - Each theme has one query, `units`, over `{{UNITS}}`: a relation of `(grp, id, stratum, cell)` rows with cells at resolution 8, 9 or 10. It returns one row per `(grp, id, stratum, variable)` with `value`, the area-weighted mean over the unit's cells in that stratum, and `w`, the area behind it. The theme lists its `variables`: `{ id, label, dir, format, unit?, default?, source?, resolution?, licence?, range_check? }`. A theme with `"scored": false` holds covariates, which are shown and checked against each set's range but not scored.
+- The focal role may list `examples: [{ label, file, countries? }]`, GeoJSON files relative to the app, each shown as a button that loads its polygons into the editor, for demonstrations.
 - Drawn and uploaded polygons are filled with resolution-10 cells on the query server; a polygon smaller than one cell gets the cell under an interior point. A run resolves the live units once and writes their cells into each theme query as a literal.
 - Catalog presets are read from `precompute baselines` files when they exist, and run live otherwise.
 - Each focal unit is rated on five bands from the floor median (rank 1) to the ceiling median (rank 5), the quintile ranks of the Wallacea Trust methodology. `compare.rating` sets `basis` (the theme ids the headline rating uses; the other scored themes are rated beside it), and optionally `colors` and `labels`; labels name each role's `anchor` through `{floor}` and `{ceiling}`. A metric whose floor and ceiling medians are too close to separate is left out of the ratings.
@@ -232,7 +259,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.4.2 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.4.3 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
