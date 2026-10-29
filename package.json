@@ -1,6 +1,6 @@
 {
   "name": "glen-charts",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Config-driven area explorers over the DuckDB geo catalog: fixed SQL per theme, precomputed results, reports with runnable code, and an optional assistant.",
   "type": "module",
   "license": "BSD-2-Clause",

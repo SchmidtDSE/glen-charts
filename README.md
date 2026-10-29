@@ -244,7 +244,9 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
       "presets": [{ "id": "cocoa", "label": "...", "countries": ["PE"], "sql": "SELECT h9::VARCHAR AS id, NULL AS name, h9 AS cell FROM ... WHERE h0 IN ({{H0S}})" }] },
     { "id": "ceiling", "label": "Ceiling", "color": "#1d6b44", "default": "wdpa", "presets": [{ "...": "..." }] }
   ],
-  "precompute": { "countries": ["PE"] }
+  "precompute": { "countries": ["PE"] },
+  "map_cells": "SELECT DISTINCT h0, h8 FROM read_parquet('.../countries/hex/h0=*/data_0.parquet') WHERE country = '{{ISO2}}' AND h0 IN ({{H0S}})",
+  "layers_page": "layers.html"
 }
 ```
 
@@ -256,12 +258,14 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 - Drawn and uploaded polygons are filled with resolution-10 cells on the query server; a polygon smaller than one cell gets the cell under an interior point. A run resolves the live units once and writes their cells into each theme query as a literal.
 - Catalog presets are read from `precompute baselines` files when they exist, and run live otherwise.
 - With more than one focal unit, the ratings card also rates them together as one area: each metric takes the area-weighted median over the units, so one unusual unit cannot move it far, and is then rated as for a single unit. The CSV carries it as unit `all`.
+- The map has a layer picker that shows any one variable of the country's themes as hexagons. A hexagon's value comes from its theme's own `units` query with the hexagon treated as a unit, so the map shows what a unit of that size would score. Below zoom 8 the map reads the country's overview from `precompute maps` (resolution 6, about 36 km²); zoomed in, it queries the hexagons in view live at resolution 7, 8 and then 9 (about 10 ha). Colour classes are quantiles of the overview, so they mean the same at every zoom. `compare.map_cells` is the SQL that returns the country's resolution-8 cells `(h0, h8)` for the overview. `#layer=<id>` in the URL opens the explorer with that layer shown.
+- `compare.layers_page` names a page documenting each layer (e.g. `"layers.html"`), which each metric then links to. `core/layers.js`, `createLayers({ explorer })`, renders it from the themes: each variable's facts from `theme.json`, then the Markdown file `<theme dir>/layers/<variable id>.md`, rendered with [marked](https://marked.js.org) when the page loads it, then the theme's method and SQL.
 - Each focal unit is rated on five bands from the floor median (rank 1) to the ceiling median (rank 5), the quintile ranks of the Wallacea Trust methodology. `compare.rating` sets `basis` (the theme ids the headline rating uses; the other scored themes are rated beside it), and optionally `colors` and `labels`; labels name each role's `anchor` through `{floor}` and `{ceiling}`. A metric whose floor and ceiling medians are too close to separate is left out of the ratings.
 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.4.4 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.7.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
@@ -274,6 +278,7 @@ npx github:SchmidtDSE/glen-charts#v0.4.4 precompute --site <app dir> <job> [args
 | `peers [theme ...]` | `data/peers/<theme>/<jur>.json` from a theme's `peers` SQL |
 | `sources` | `data/sources.json`, the STAC records of every dataset the config reads or maps (including the extensions module's overlays), for the export's citations |
 | `baselines [country ...]` | compare mode: `data/baselines/<country>/<preset>.json`, every catalog preset's units scored on every theme; `--preset a,b` limits presets, `--theme a,b` re-runs only those themes |
+| `maps [country ...]` | compare mode: `data/maps/<country>/<theme>.json`, every variable of each theme on the country's resolution-6 hexagons, the map's overview; `--theme a,b` limits the themes |
 | (none) | lists, statewide, peers, sources |
 
 `--param width=all` runs every option; `--param width=20` one; the default is each param's default. `MCP_URL` overrides `mcp_url`; `MCP_TIMEOUT_MS` overrides the 300 s query timeout (for a local query server running whole-catalog scans).
