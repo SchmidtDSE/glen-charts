@@ -150,6 +150,16 @@ export function paramKey(app, params = {}) {
         .map(p => `${p.id}-${String(params[p.id] ?? p.default).replace(/[^A-Za-z0-9.]+/g, '_')}`).join('_');
 }
 
+/**
+ * The file and cache key part for one query: like paramKey, but over only the
+ * params the query declares it uses ("params": ["width"]; [] for none), so a
+ * query that ignores the settings is precomputed once rather than per combination.
+ */
+export function queryParamKey(app, q, params = {}) {
+    if (!Array.isArray(q?.params)) return paramKey(app, params);
+    return paramKey({ params: (app.params || []).filter(p => q.params.includes(p.id)) }, params);
+}
+
 /** Every combination of param values: [{ width: 5 }, { width: 10 }, ...]. */
 export function paramCombos(app, pick = {}) {
     let combos = [{}];
@@ -218,7 +228,8 @@ export class Engine {
         this.statewide = statewide;
     }
 
-    sqlFor(theme, queryName, aoi) {
+    /** Every template token bound for an area: AOI, AOI10, ID and KIND (named areas), params, source and app tokens. */
+    tokensFor(aoi) {
         const app = this.config.app;
         const params = aoi.params || {};
         const tokens = { ...paramTokens(app, params), AOI: aoi.sql, AOI10: aoi.sql10 ?? '' };
@@ -227,11 +238,22 @@ export class Engine {
         if (aoi.origin) { tokens.ORIGIN_LAT = String(+aoi.origin.lat); tokens.ORIGIN_LON = String(+aoi.origin.lon); }
         Object.assign(tokens, aoi.tokens || {});
         for (const [name, fn] of Object.entries(this.tokens)) tokens[name] = fn(aoi, app, params);
-        return expand(theme.sql[queryName], tokens, `${theme.id}/${theme.queries[queryName]?.file || queryName}`);
+        return tokens;
+    }
+
+    sqlFor(theme, queryName, aoi) {
+        return expand(theme.sql[queryName], this.tokensFor(aoi), `${theme.id}/${theme.queries[queryName]?.file || queryName}`);
+    }
+
+    /** Any SQL template (e.g. one written in chat) expanded for an area. */
+    expandFor(sql, aoi, where = '') {
+        return expand(sql, this.tokensFor(aoi), where);
     }
 
     run(theme, queryName, aoi) {
-        const key = `${aoi.key}|${theme.id}|${queryName}`;
+        // keyed by only the params the query uses, so changing another setting reuses its rows
+        const pk = queryParamKey(this.config.app, theme.queries[queryName], aoi.params || {});
+        const key = `${aoi.key.split('@')[0]}@${pk}|${theme.id}|${queryName}`;
         if (!this.cache.has(key)) {
             // precomputed rows for a named area when they exist, else live; the
             // SQL is expanded only when it has to run, so a template problem
@@ -286,7 +308,7 @@ export class Engine {
     /** {id: rows} for every area of the AOI's kind and params, when the query has an "all" file and it was precomputed. */
     allResults(theme, queryName, aoi) {
         if (!allFile(theme.queries[queryName])) return Promise.resolve(null);
-        const pk = paramKey(this.config.app, aoi.params || {});
+        const pk = queryParamKey(this.config.app, theme.queries[queryName], aoi.params || {});
         const name = `${aoi.kind}${pk ? '-' + pk : ''}`;
         return this._json(`results|${theme.id}|${queryName}|${name}`, `${this.dataBase}/data/results/${theme.id}/${queryName}/${name}.json`);
     }
@@ -299,7 +321,7 @@ export class Engine {
 
     /** The region's precomputed rows for one query, or null. */
     async statewideRows(theme, queryName, params = {}) {
-        const pk = paramKey(this.config.app, params);
+        const pk = queryParamKey(this.config.app, theme.queries[queryName], params);
         if (!pk) return this.statewide?.results?.[theme.id]?.[queryName] ?? null;
         const f = await this._json(`statewide|${pk}`, `${this.dataBase}/data/statewide/${pk}.json`);
         return f?.results?.[theme.id]?.[queryName] ?? null;

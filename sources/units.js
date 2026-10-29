@@ -153,13 +153,17 @@ function signedArea(r) {
 }
 
 function centroid(r) {
+    // relative to the first vertex: with raw lon/lat the products cancel and a
+    // parcel-sized ring loses its area to rounding
+    const [ox, oy] = r[0];
     let a = 0, x = 0, y = 0;
     for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-        const f = r[j][0] * r[i][1] - r[i][0] * r[j][1];
-        a += f; x += (r[j][0] + r[i][0]) * f; y += (r[j][1] + r[i][1]) * f;
+        const xi = r[i][0] - ox, yi = r[i][1] - oy, xj = r[j][0] - ox, yj = r[j][1] - oy;
+        const f = xj * yi - xi * yj;
+        a += f; x += (xj + xi) * f; y += (yj + yi) * f;
     }
     if (a === 0) return r[0];
-    return [x / (3 * a), y / (3 * a)];
+    return [ox + x / (3 * a), oy + y / (3 * a)];
 }
 
 function inside([px, py], r) {

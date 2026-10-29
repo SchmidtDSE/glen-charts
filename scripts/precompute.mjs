@@ -50,7 +50,7 @@ import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { register } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { loadConfig, Engine, statewideAoi, jurisdictionAoi, expand, paramKey, paramCombos, paramTokens, allFile } from '../core/engine.js';
+import { loadConfig, Engine, statewideAoi, jurisdictionAoi, expand, paramKey, queryParamKey, paramCombos, paramTokens, allFile } from '../core/engine.js';
 import { dataPaths, pathPrefix } from '../core/sources.js';
 import { McpQueryClient } from '../core/mcp.js';
 import { countryTokens, presetsFor, presetUnitsSql, withStrata, strataNamesSql } from '../sources/units.js';
@@ -112,27 +112,41 @@ if (what === 'all' || what === 'lists') {
 }
 
 if ((what === 'all' || what === 'statewide') && app.statewide) {
-    for (const params of combos) {
-        const pk = paramKey(app, params);
+    // one file per param key; a query declaring the params it uses ("params")
+    // goes in the file for just those, once, rather than once per combination
+    const files = new Map();
+    const fileFor = async pk => {
         const file = pk ? `${root}/data/statewide/${pk}.json` : `${root}/data/statewide.json`;
-        if (pk) await mkdir(`${root}/data/statewide`, { recursive: true });
-        let out = { generated: null, results: {} };
-        try { out = JSON.parse(await readFile(file, 'utf8')); } catch { /* fresh */ }
+        if (!files.has(file)) {
+            if (pk) await mkdir(`${root}/data/statewide`, { recursive: true });
+            let out = { generated: null, results: {} };
+            try { out = JSON.parse(await readFile(file, 'utf8')); } catch { /* fresh */ }
+            files.set(file, { out, done: new Set() });
+        }
+        return files.get(file);
+    };
+    for (const params of combos) {
         const aoi = statewideAoi(app, params);
         for (const theme of allThemes) {
             if (only.length && !only.includes(theme.id)) continue;
-            out.results[theme.id] ??= {};
             for (const [name, q] of Object.entries(theme.queries)) {
                 if (q.statewide === false) continue;
+                const pk = queryParamKey(app, q, params);
+                const f = await fileFor(pk);
+                if (f.done.has(`${theme.id}.${name}`)) continue;
+                f.done.add(`${theme.id}.${name}`);
+                f.out.results[theme.id] ??= {};
                 const t0 = Date.now();
                 try {
-                    out.results[theme.id][name] = await engine.client.query(engine.sqlFor(theme, name, aoi));
+                    f.out.results[theme.id][name] = await engine.client.query(engine.sqlFor(theme, name, aoi));
                     console.log(`statewide${pk ? ' ' + pk : ''} ${theme.id}.${name}: ok (${secs(t0)}s)`);
                 } catch (err) {
                     console.error(`statewide${pk ? ' ' + pk : ''} ${theme.id}.${name}: FAILED — ${err.message.split('\n')[0]}`);
                 }
             }
         }
+    }
+    for (const [file, { out }] of files) {
         out.generated = new Date().toISOString();
         await writeFile(file, JSON.stringify(out, null, 1));
     }
@@ -186,8 +200,11 @@ if (what === 'results') {
             for (const jur of app.jurisdictions) {
                 if (jurFilter && !jurFilter.includes(jur.id)) continue;
                 if (/\{\{CELLS10\}\}/.test(sql) && !jur.cells10) continue;
+                const written = new Set();
                 for (const params of combos) {
-                    const pk = paramKey(app, params);
+                    const pk = queryParamKey(app, q, params);
+                    if (written.has(pk)) continue;
+                    written.add(pk);
                     const t0 = Date.now();
                     try {
                         const byId = {};

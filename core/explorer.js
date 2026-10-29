@@ -26,7 +26,12 @@
  * { values, label, chart_label, title, citation, url, note }, project_url,
  * live_note, engine ("mcp" | "wasm"), wasm, data_base, format, id, default_area, overlays (as the
  * extension overlays, with a declared popup; see installOverlays), leaderboard
- * (core/leaderboard.js: a second tab ranking every area of one type).
+ * (core/leaderboard.js: a second tab ranking every area of one type), pages
+ * ([{ id, label, file, full?, sources? }]: tabs showing an HTML file, e.g. an About page;
+ * sources: true appends the dataset citations from data/sources.json), chat (core/chat.js:
+ * an optional assistant, loaded only when this block is present; without it no LLM code loads).
+ * Extensions may add views: [{ id, label, full?, render(el, ctx) }], tabs of their own.
+ * A view with full: true hides the map and gives the panel the whole width.
  * A param with "control": "slider" is drawn as a slider over its options. A slider param with
  * "relative": { theme, query, field, format?, note?, offset_format? } holds offsets from a value
  * that depends on the area (e.g. a species' measured threshold): once an area is chosen, the query
@@ -80,7 +85,7 @@ const SHELL = `
     </aside>`;
 
 export async function createExplorer({ root = null, base = '.', extensions = {} } = {}) {
-    const ext = { tokens: {}, charts: {}, overlays: [], sources: [], ...extensions };
+    const ext = { tokens: {}, charts: {}, overlays: [], sources: [], views: [], ...extensions };
     let el = typeof root === 'string' ? document.querySelector(root) : root;
     if (!el) el = document.getElementById('glen');
     if (!el) { el = document.createElement('main'); el.id = 'glen'; document.body.appendChild(el); }
@@ -116,7 +121,7 @@ class Explorer {
             params: {},
             mapTheme: null,
             token: 0,
-            view: 'profile',    // 'profile' | 'leaderboard'
+            view: 'profile',    // 'profile' | 'leaderboard' | a page or extension view id
         };
         this.lb = null;
         this.charts = { ...builtinCharts, ...ext.charts };
@@ -135,6 +140,7 @@ class Explorer {
             fetchJson(`${this.base}/config.json`),          // optional runtime override (k8s writes the MCP URL)
             app.reference?.values ? fetchJson(`${this.base}/${app.reference.values}`) : null,
         ]);
+        this.runtime = rt || {};
         this.reference = app.reference ? { ...app.reference, values: refValues } : null;
         let client = null;
         if (app.engine === 'wasm') {
@@ -157,6 +163,7 @@ class Explorer {
         this.renderViewTabs();
         this.wireSearch();
         this.wireResize();
+        if (app.chat) this.mountChat();
         if (!(await this.restoreFromHash())) await this.landing();
         // a link pasted into an open tab (writeHash uses replaceState, which fires no event)
         window.addEventListener('hashchange', () => this.restoreFromHash());
@@ -541,6 +548,7 @@ class Explorer {
             this.mapView.select(feature.id);
             return;
         }
+        if (this.customView()) this.setView('profile');
         s.feature = feature;
         this.$('#place-input').value = feature.name;
         this.syncPickHint();
@@ -556,7 +564,7 @@ class Explorer {
         this.state.aoi = aoi;
         this.state.token++;
         this.writeHash();
-        if (this.state.view === 'leaderboard') return;
+        if (this.state.view !== 'profile') return;
         if (aoi) this.renderReport();
         else this.renderIntro();
         this.relabelRelative();
@@ -572,14 +580,30 @@ class Explorer {
 
     /* ---------------------------------------------------------- leaderboard */
 
+    /** The tabs: the profile, the leaderboard, app pages and extension views. */
+    views() {
+        const app = this.config.app, lb = app.leaderboard;
+        return [
+            { id: 'profile', label: app.labels?.profile_tab || lb?.profile_tab || 'Profile' },
+            ...(lb ? [{ id: 'leaderboard', label: lb.tab || 'Leaderboard' }] : []),
+            ...(app.pages || []).map(p => ({ ...p, page: true })),
+            ...this.ext.views,
+        ];
+    }
+
+    /** The current view when it is a page or an extension view, else null. */
+    customView() {
+        const v = this.state.view;
+        return v === 'profile' || v === 'leaderboard' ? null : this.views().find(x => x.id === v) || null;
+    }
+
     renderViewTabs() {
-        const spec = this.config.app.leaderboard;
-        if (!spec) return;
+        const views = this.views();
+        if (views.length <= 1) return;
         const nav = document.createElement('nav');
         nav.className = 'view-tabs';
         nav.setAttribute('role', 'tablist');
-        nav.innerHTML = `<button type="button" role="tab" data-view="profile">${escapeHtml(spec.profile_tab || 'Profile')}</button>` +
-            `<button type="button" role="tab" data-view="leaderboard">${escapeHtml(spec.tab || 'Leaderboard')}</button>`;
+        nav.innerHTML = views.map(v => `<button type="button" role="tab" data-view="${escapeHtml(v.id)}">${escapeHtml(v.label)}</button>`).join('');
         nav.querySelectorAll('button').forEach(b => { b.onclick = () => this.setView(b.dataset.view); });
         this.$('#controls').before(nav);
         this.markView();
@@ -588,6 +612,14 @@ class Explorer {
     markView() {
         const v = this.state.view;
         this.el.querySelectorAll('.view-tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === v)));
+        const custom = this.customView();
+        this.$('#controls').hidden = !!custom;
+        const full = !!custom?.full;
+        if (this.el.classList.contains('glen-full') !== full) {
+            this.el.classList.toggle('glen-full', full);
+            requestAnimationFrame(() => this.mapView.map.resize());
+        }
+        if (custom) return;
         const lb = v === 'leaderboard';
         for (const sel of ['#step-jur', '#step-themes', '#source-steps']) {
             const n = this.$(sel);
@@ -603,6 +635,26 @@ class Explorer {
         }
     }
 
+    /** Render a page (an HTML file, plus dataset citations with sources: true) or an extension view into the report panel. */
+    async renderCustomView(v) {
+        const r = this.$('#report');
+        this.hideHint();
+        if (!v.page) {
+            r.innerHTML = '';
+            await v.render(r, { engine: this.engine, app: this.config.app, explorer: this });
+            return;
+        }
+        this.pageHtml ??= {};
+        if (!(v.id in this.pageHtml)) {
+            const [html, sources] = await Promise.all([
+                fetch(`${this.base}/${v.file}`, { cache: 'no-cache' }).then(x => (x.ok ? x.text() : `<p class="err">Could not load ${escapeHtml(v.file)}</p>`)),
+                v.sources ? fetchJson(`${this.engine.dataBase}/data/sources.json`) : null,
+            ]);
+            this.pageHtml[v.id] = `<div class="page">${html}${sources ? sourcesHtml(sources) : ''}</div>`;
+        }
+        if (this.state.view === v.id) r.innerHTML = this.pageHtml[v.id];
+    }
+
     leaderboardJur() {
         const spec = this.config.app.leaderboard;
         return this.config.app.jurisdictions.find(j => j.id === spec.jurisdiction) || this.config.app.jurisdictions[0];
@@ -610,11 +662,15 @@ class Explorer {
 
     async setView(view, { lbState = null } = {}) {
         const spec = this.config.app.leaderboard;
-        if (!spec || (view !== 'profile' && view !== 'leaderboard')) view = 'profile';
+        if (!this.views().some(v => v.id === view)) view = 'profile';
         const s = this.state;
         s.view = view;
         this.markView();
-        if (view === 'leaderboard') {
+        const custom = this.customView();
+        if (custom) {
+            this.$('#map-chips').hidden = true;
+            await this.renderCustomView(custom);
+        } else if (view === 'leaderboard') {
             const jur = this.leaderboardJur();
             if (s.mode !== jur.id) await this.setMode(jur.id, { keepFeature: true });
             this.hideHint();
@@ -739,6 +795,7 @@ class Explorer {
             r.appendChild(n);
         }
         for (const t of this.orderedThemes()) r.appendChild(renderThemeCard(this.engine, t, aoi, opts));
+        this.chat?.renderPinned(r, aoi, opts.isCurrent);
         if (!isRegion && app.live_note && aoi.id) {
             this.engine.areaFile(aoi).then(pre => {
                 if (pre || token !== this.state.token) return;
@@ -816,6 +873,20 @@ class Explorer {
         return modes.length === 1 ? this.ext.sources.find(x => x.id === modes[0].id) || null : null;
     }
 
+    /**
+     * The optional assistant (app.chat). core/chat.js and the agent it uses
+     * load only here, so an app without a chat block loads no LLM code.
+     */
+    async mountChat() {
+        try {
+            const { mountChat } = await import('./chat.js');
+            this.chat = await mountChat(this);
+            if (this.state.aoi && this.state.view === 'profile') this.chat.renderPinned(this.$('#report'), this.state.aoi, () => true);
+        } catch (err) {
+            console.error('Chat failed to load', err);
+        }
+    }
+
     showHint(text) { const h = this.$('#map-hint'); h.textContent = text; h.hidden = false; }
     hideHint() { this.$('#map-hint').hidden = true; }
 
@@ -836,7 +907,7 @@ class Explorer {
         if (s.themes.size !== this.config.themes.length) q.set('themes', this.orderedThemes().map(t => t.id).join(','));
         if (s.mapTheme && this.config.themes.some(t => t.map)) q.set('map', s.mapTheme);
         for (const p of app.params) if (String(s.params[p.id]) !== String(p.default ?? optionValue(p.options[0]))) q.set(p.id, s.params[p.id]);
-        if (s.view === 'leaderboard') q.set('view', 'leaderboard');
+        if (s.view !== 'profile') q.set('view', s.view);
         const lbs = this.lb?.stateString();
         if (lbs) q.set('score', lbs);
         const hash = '#' + parts.join('/') + (q.toString() ? '?' + q.toString().replace(/%2C/g, ',').replace(/%3B/g, ';').replace(/%3D/g, '=') : '');
@@ -875,10 +946,12 @@ class Explorer {
             return true;
         }
         if (!modeId && q.get('view') === 'leaderboard' && this.config.app.leaderboard) { await this.setView('leaderboard', { lbState: q.get('score') || '' }); return true; }
-        if (!modeId || (source && source.hashable === false)) { await this.landing(); return true; }
+        const page = q.get('view') && q.get('view') !== 'leaderboard' && this.views().some(v => v.id === q.get('view')) ? q.get('view') : null;
+        if (!modeId || (source && source.hashable === false)) { await this.landing(); if (page) await this.setView(page); return true; }
         if (!this.modes().some(m => m.id === modeId)) { await this.setMode(this.defaultMode()); return true; }
         await this.setMode(modeId, { keepFeature: !!featId });
         if (featId) this.pickById(decodeURIComponent(featId));
+        if (page) await this.setView(page);
         if (this.config.app.leaderboard && (q.get('view') === 'leaderboard' || q.has('score'))) {
             if (q.get('view') === 'leaderboard') await this.setView('leaderboard', { lbState: q.get('score') || '' });
             else { this.pendingScore = q.get('score'); }
@@ -918,6 +991,18 @@ async function fetchJson(url) {
         const r = await fetch(url, { cache: 'no-cache' });
         return r.ok ? await r.json() : null;
     } catch { return null; }
+}
+
+/** Dataset citations from data/sources.json (written by precompute sources), for a page with sources: true. */
+function sourcesHtml(sources) {
+    const items = (sources.datasets || []).map(d => {
+        const st = d.stac || {};
+        const link = (st.links || []).find(l => l.rel === 'self')?.href;
+        const lic = (st.links || []).find(l => l.rel === 'license')?.href;
+        const by = (st.providers || []).filter(p => (p.roles || []).some(r => r === 'producer' || r === 'licensor')).map(p => p.name);
+        return `<li><b>${escapeHtml(st.title || d.id)}</b>${by.length ? `. ${escapeHtml([...new Set(by)].join(', '))}` : ''}${st['sci:citation'] ? `<div class="cite">${escapeHtml(st['sci:citation'])}</div>` : ''}<div class="meta">${st.license ? `Licence: ${lic ? `<a href="${escapeHtml(lic)}" target="_blank" rel="noopener">${escapeHtml(st.license)}</a>` : escapeHtml(st.license)}` : ''}${link ? ` · <a href="${escapeHtml(link)}" target="_blank" rel="noopener">STAC record</a>` : ''}</div></li>`;
+    });
+    return items.length ? `<h3>Datasets queried by this app</h3><ul class="sources">${items.join('')}</ul>` : '';
 }
 
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });

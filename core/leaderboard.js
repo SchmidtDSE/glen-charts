@@ -541,13 +541,6 @@ function downloadCsv(lb) {
 const round1 = v => (v === null || v === undefined ? '' : Math.round(v * 10) / 10);
 
 export const leaderboardCss = `
-.view-tabs { display: flex; gap: 2px; padding: 6px 16px 0; background: var(--chrome-bg); border-bottom: 1px solid var(--line); flex: 0 0 auto; }
-.view-tabs button {
-    border: 0; background: none; padding: 7px 12px 8px; cursor: pointer; font-size: 13.5px; font-weight: 600;
-    color: var(--text-3); border-bottom: 2px solid transparent; margin-bottom: -1px;
-}
-.view-tabs button:hover { color: var(--text); }
-.view-tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
 .pick-hint { font-size: 14px; color: var(--text-2); padding: 2px 0; }
 .pick-hint b { color: var(--text); }
 .lb-intro { color: var(--text-2); font-size: 13px; margin: -2px 0 10px; }
