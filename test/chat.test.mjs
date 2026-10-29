@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mdLite } from '../core/chat.js';
+import { renderCardBody } from '../core/chat.js';
 import { Engine, jurisdictionAoi } from '../core/engine.js';
 import { polygonAoi } from '../sources/polygon.js';
 
@@ -31,10 +31,13 @@ test('a polygon smaller than a cell falls back to its interior point', () => {
     assert.match(aoi.sql10, /37\.800100, -122\.269900\)/);
 });
 
-test('mdLite escapes HTML and renders lists, bold and links', () => {
-    assert.equal(mdLite('<b>x</b>'), '<p>&lt;b&gt;x&lt;/b&gt;</p>');
-    assert.equal(mdLite('- a\n- **b**'), '<ul><li>a</li><li><b>b</b></li></ul>');
-    assert.match(mdLite('see https://example.com/a'), /<a href="https:\/\/example.com\/a"/);
+test('the chat loads its agent and interface from glen-harness, not geo-agent', () => {
+    const src = readFileSync(new URL('../core/chat.js', import.meta.url), 'utf8');
+    assert.match(src, /gh\/SchmidtDSE\/glen-harness@v\d+\.\d+\.\d+'/);
+    assert.match(src, /\/src\/index\.js/);
+    assert.match(src, /\/ui\/index\.js/);
+    assert.ok(!/geo-agent@/.test(src), 'no geo-agent import');
+    assert.equal(typeof renderCardBody, 'function');
 });
 
 test('queryParamKey keys a query by only the params it declares', async () => {
