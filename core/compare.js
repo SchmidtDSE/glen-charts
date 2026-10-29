@@ -292,7 +292,7 @@ class Compare {
                 if (!p.file) liveParts.push(presetUnitsSql(p.preset, p.role.id, ctok));
             });
             const slow = presets.filter(p => !p.file).map(p => p.preset.label);
-            status.textContent = `Querying ${this.themes.length} themes${slow.length ? ` (live: ${slow.join(', ')}; this can take several minutes)` : ''}…`;
+            status.textContent = `Querying ${this.countryThemes().length} themes${slow.length ? ` (live: ${slow.join(', ')}; this can take several minutes)` : ''}…`;
             // resolve the live units to cells and strata once, then inline them in every theme query
             const UNITS = withStrata(liveParts, this.cmp.strata);
             const [resolved, strataRows] = await Promise.all([
@@ -301,16 +301,16 @@ class Compare {
             ]);
             if (token !== this.token) return;
             const inline = inlineUnitsSql(resolved);
-            const themeRows = await Promise.all(this.themes.map(t => this.query(expand(t.sql.units, { ...ctok, UNITS: inline }, `${t.id}/units`))));
+            const themeRows = await Promise.all(this.countryThemes().map(t => this.query(expand(t.sql.units, { ...ctok, UNITS: inline }, `${t.id}/units`))));
             if (token !== this.token) return;
             const rows = themeRows.flat();
             const strataNames = new Map(strataRows.map(r => [String(r.stratum), r.name]));
             for (const p of presets) {
                 if (!p.file) continue;
                 for (const s of p.file.strata || []) strataNames.set(String(s.stratum), s.name);
-                for (const t of this.themes) for (const [id, stratum, variable, value, w] of p.file.results?.[t.id] || []) rows.push({ grp: p.role.id, id, stratum, variable, value, w });
+                for (const t of this.countryThemes()) for (const [id, stratum, variable, value, w] of p.file.results?.[t.id] || []) rows.push({ grp: p.role.id, id, stratum, variable, value, w });
             }
-            this.data = { rows, strataNames, presets, sql: { UNITS, themes: this.themes.map(t => ({ id: t.id, label: t.label, sql: expand(t.sql.units, { ...ctok, UNITS: '{{UNITS}}' }) })) } };
+            this.data = { rows, strataNames, presets, sql: { UNITS, themes: this.countryThemes().map(t => ({ id: t.id, label: t.label, sql: expand(t.sql.units, { ...ctok, UNITS: '{{UNITS}}' }) })) } };
             status.textContent = '';
             this.rescore();
             this.collapseControls(true);
@@ -326,6 +326,11 @@ class Compare {
     }
 
     /** A cached query, retried once after a transient failure on the server or the network. */
+    /** Themes that cover the chosen country (a theme's "countries" list; none means every country). */
+    countryThemes() {
+        return this.themes.filter(t => !t.countries || t.countries.includes(this.country.id));
+    }
+
     query(sql) {
         if (!this.cache.has(sql)) {
             const transient = err => /IO Error|Could not resolve|HTTP 5\d\d|Failed to fetch|NetworkError|aborted/i.test(String(err?.message));
