@@ -72,6 +72,20 @@ export function median(vals) {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/** Median of [value, weight] pairs: the value where the cumulative weight reaches half, averaged with the next when it lands exactly on half. */
+export function weightedMedian(pairs) {
+    const s = pairs.filter(([v, w]) => Number.isFinite(v) && w > 0).sort((a, b) => a[0] - b[0]);
+    if (!s.length) return null;
+    const half = s.reduce((a, [, w]) => a + w, 0) / 2;
+    let acc = 0;
+    for (let i = 0; i < s.length; i++) {
+        acc += s[i][1];
+        if (Math.abs(acc - half) < 1e-12 * half && i + 1 < s.length) return (s[i][0] + s[i + 1][0]) / 2;
+        if (acc > half) return s[i][0];
+    }
+    return s[s.length - 1][0];
+}
+
 /** Mid-rank percentile (0–100) of v among sorted values: share below plus half the ties. */
 export function midRank(sorted, v) {
     if (!sorted.length || !Number.isFinite(v)) return null;
@@ -110,7 +124,11 @@ export function basket(vals) {
  *   variables  [{ id, dir, scored, group? }] — the selected metrics and covariates;
  *              `group` (e.g. the theme) gives each unit a rank per group too
  *   groups     { focal: 'focal', floor: 'floor', ceiling: 'ceiling' } group names
- * Returns { stats: { variable: { floor, ceiling, focal } }, units: [...], set }.
+ * Returns { stats: { variable: { floor, ceiling, focal } }, units: [...], set, pooled }:
+ * `set` scores the median focal unit on each metric, and `pooled` scores all
+ * focal units as one, each metric the area-weighted median over them: the
+ * value with half their combined area on either side, so that one unusual unit
+ * cannot move it far.
  */
 export function scoreUnits(units, variables, groups = { focal: 'focal', floor: 'floor', ceiling: 'ceiling' }) {
     const by = g => [...units.values()].filter(u => u.grp === g);
@@ -183,7 +201,12 @@ export function scoreUnits(units, variables, groups = { focal: 'focal', floor: '
     const out = focal.map(u => ({ id: u.id, ...scoreOne(u.values) }));
     // the focal set as a whole: each metric at the median over focal units
     const setValues = Object.fromEntries(variables.map(v => [v.id, stats[v.id].focal.median]));
-    return { stats, units: out, set: { n: focal.length, ...scoreOne(setValues) } };
+    const pooledValues = {};
+    for (const v of variables) {
+        const m = weightedMedian(focal.filter(u => Number.isFinite(u.values[v.id]) && u.w?.[v.id] > 0).map(u => [u.values[v.id], u.w[v.id]]));
+        if (m != null) pooledValues[v.id] = SIG(m);
+    }
+    return { stats, units: out, set: { n: focal.length, ...scoreOne(setValues) }, pooled: { n: focal.length, ...scoreOne(pooledValues) } };
 }
 
 /** Distinct strata of the focal group's rows: the default landscape. */

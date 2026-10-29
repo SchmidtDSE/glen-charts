@@ -16,12 +16,12 @@ data/                       written by the precompute CLI
 ```
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.3/core/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.4/core/style.css">
 <link rel="stylesheet" href="app/style.css">   <!-- optional: override the :root palette tokens -->
 ...
 <main id="glen"></main>
 <script type="module">
-  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.3/core/explorer.js';
+  import { createExplorer } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-charts@v0.4.4/core/explorer.js';
   createExplorer();               // or createExplorer({ extensions }) — see below
 </script>
 ```
@@ -254,12 +254,13 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 - The focal role may list `examples: [{ label, file, countries? }]`, GeoJSON files relative to the app, each shown as a button that loads its polygons into the editor, for demonstrations.
 - Drawn and uploaded polygons are filled with resolution-10 cells on the query server; a polygon smaller than one cell gets the cell under an interior point. A run resolves the live units once and writes their cells into each theme query as a literal.
 - Catalog presets are read from `precompute baselines` files when they exist, and run live otherwise.
+- With more than one focal unit, the ratings card also rates them together as one area: each metric takes the area-weighted median over the units, so one unusual unit cannot move it far, and is then rated as for a single unit. The CSV carries it as unit `all`.
 - Each focal unit is rated on five bands from the floor median (rank 1) to the ceiling median (rank 5), the quintile ranks of the Wallacea Trust methodology. `compare.rating` sets `basis` (the theme ids the headline rating uses; the other scored themes are rated beside it), and optionally `colors` and `labels`; labels name each role's `anchor` through `{floor}` and `{ceiling}`. A metric whose floor and ceiling medians are too close to separate is left out of the ratings.
 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.4.3 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.4.4 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |
