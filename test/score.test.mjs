@@ -1,7 +1,7 @@
 // node --test test/
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { combineStrata, midRank, median, basket, scoreUnits } from '../core/score.js';
+import { combineStrata, midRank, median, basket, scoreUnits, rankOf } from '../core/score.js';
 import { interiorPoint } from '../sources/units.js';
 
 test('midRank counts half the ties', () => {
@@ -78,4 +78,24 @@ test('values differing only in the last digits tie', () => {
     ];
     const r = scoreUnits(combineStrata(rows), [{ id: 'f', dir: 1 }]);
     assert.equal(r.units[0].metrics.f.floorPct, 50);
+});
+
+test('position and rank place a unit between floor and ceiling medians', () => {
+    assert.deepEqual([-0.3, 0, 0.19, 0.2, 0.5, 0.99, 1, 1.4].map(rankOf), [1, 1, 1, 2, 3, 5, 5, 5]);
+    const rows = [];
+    const add = (grp, id, up, down, flat) => {
+        rows.push({ grp, id, stratum: 0, variable: 'up', value: up, w: 1 });
+        rows.push({ grp, id, stratum: 0, variable: 'down', value: down, w: 1 });
+        rows.push({ grp, id, stratum: 0, variable: 'flat', value: flat, w: 1 });
+    };
+    add('floor', 'f1', 0, 1, 5); add('floor', 'f2', 2, 0.8, 5); add('floor', 'f3', 4, 0.6, 5);
+    add('ceiling', 'c1', 10, 0.2, 5); add('ceiling', 'c2', 12, 0, 5.0001);
+    add('focal', 'good', 10, 0.2, 5); add('focal', 'poor', 1, 0.9, 5);
+    const r = scoreUnits(combineStrata(rows), [{ id: 'up', dir: 1 }, { id: 'down', dir: -1 }, { id: 'flat', dir: 1 }]);
+    assert.equal(r.stats.flat.separates, false);
+    const good = r.units.find(u => u.id === 'good'), poor = r.units.find(u => u.id === 'poor');
+    assert.equal(good.metrics.up.position, (10 - 2) / (11 - 2));
+    assert.equal(good.metrics.flat.position, null);
+    assert.equal(good.rank, 5);
+    assert.equal(poor.rank, 1);
 });

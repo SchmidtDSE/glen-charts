@@ -36,8 +36,9 @@ import { MapView } from './map.js';
 import { fmt, escapeHtml, setFormatOptions } from './format.js';
 import { countryTokens, presetsFor, polygonUnitsSql, presetUnitsSql, withStrata, strataNamesSql, inlineUnitsSql, resolvedUnitsSql } from '../sources/units.js';
 import { UnitSetEditor, fmtHa } from '../sources/multi-draw.js';
-import { combineStrata, scoreUnits, focalStrata } from './score.js';
+import { combineStrata, scoreUnits, focalStrata, rankOf, basket } from './score.js';
 import { renderCompareStrip, compareStripCss } from '../charts/compare-strip.js';
+import { hover } from './charts.js';
 
 const SHELL = `
     <section id="map-wrap">
@@ -96,7 +97,7 @@ class Compare {
         this.countries = await fetchJson(`${this.base}/${cmp.countries}`);
         if (!this.countries?.length) throw new Error(`No country list at ${cmp.countries}`);
         this.themes = config.themes;
-        this.variables = this.themes.flatMap(t => (t.variables || []).map(v => ({ ...v, theme: t.id, scored: t.scored !== false, color: t.color })));
+        this.variables = this.themes.flatMap(t => (t.variables || []).map(v => ({ ...v, theme: t.id, group: t.id, scored: t.scored !== false, color: t.color })));
         this.selected = new Set(this.variables.filter(v => v.default !== false).map(v => v.id));
         this.landscape = (cmp.landscapes || []).find(l => l.default)?.id || 'strata';
         this.roles = cmp.roles;
@@ -352,6 +353,7 @@ class Compare {
         const inView = role => new Set([...units.values()].filter(u => u.grp === role).map(u => u.id));
         this.result = { ...result, vars, landscape, inView: Object.fromEntries(this.compRoles.map(r => [r.id, inView(r.id)])) };
         this.renderResults();
+        this.drawUnits();
         this.drawPresets();
     }
 
@@ -370,8 +372,38 @@ class Compare {
         return presetsFor(role, this.country.id).find(p => p.id === set.mode)?.label || set.mode;
     }
 
+    /**
+     * The rating scale: five bands from the floor's median (rank 1) to the
+     * ceiling's (rank 5), with app.json compare.rating { colors, labels } or
+     * these defaults. Labels name the roles' anchors ("typical cocoa farms").
+     */
+    rating() {
+        const floorRole = this.compRoles.find(x => x.id === 'floor'), ceilRole = this.compRoles.find(x => x.id === 'ceiling');
+        const floorA = floorRole?.anchor || floorRole?.label.toLowerCase() || 'the floor';
+        const ceilA = ceilRole?.anchor || ceilRole?.label.toLowerCase() || 'the ceiling';
+        const cfg = this.cmp.rating || {};
+        const colors = cfg.colors || RATING_COLORS;
+        const fill = t => t.replace('{floor}', floorA).replace('{ceiling}', ceilA);
+        const labels = (cfg.labels || RATING_LABELS).map(fill);
+        const label = (rank, p) => (rank == null ? 'Not rated'
+            : p < 0 ? fill(cfg.below || 'Below {floor}') : p > 1 ? fill(cfg.beyond || 'Beyond {ceiling}') : labels[rank - 1]);
+        const ink = rank => (rank === 1 || rank === 5 ? '#fff' : '#22201f');
+        // compare.rating.basis: the theme ids the headline rating is taken over (default: every scored theme)
+        const basis = cfg.basis || null;
+        return { floorA, ceilA, colors, labels, label, ink, basis, color: rank => (rank ? colors[rank - 1] : '#bdbab3') };
+    }
+
+    /** A scored unit's headline: the median position over the rating basis, and its rank. */
+    headline(u) {
+        const R = this.rating(), r = this.result;
+        const vars = r.vars.filter(v => v.scored && r.stats[v.id]?.separates && (!R.basis || R.basis.includes(v.group)));
+        const b = basket(vars.map(v => u.metrics[v.id]?.position));
+        return { ...b, rank: rankOf(b.median) };
+    }
+
     renderResults() {
         const r = this.result, rep = this.$('#report');
+        const R = this.rating();
         const scored = r.vars.filter(v => v.scored);
         const covs = r.vars.filter(v => !v.scored);
         const nIn = role => r.inView[role]?.size || 0;
@@ -385,9 +417,41 @@ class Compare {
         const retTxt = v => (v == null ? '—' : `${Math.round(v * 100)}%`);
         const lic = v => (v.licence ? ` <span class="licence" title="${escapeHtml(v.licence)}">${/proprietary/i.test(v.licence) ? 'proprietary' : 'NC'}</span>` : '');
         const vfmt = (x, v) => (x == null ? '—' : `${fmt(x, v.format)}${v.unit ? ` ${escapeHtml(v.unit)}` : ''}`);
-        const b = r.set.basket;
-        const loo = x => (x.loo ? `Leaving out one metric at a time moves it between ${contrastTxt(x.loo[0])} and ${contrastTxt(x.loo[1])}.` : '');
         const floorRole = this.compRoles.find(x => x.id === 'floor'), ceilRole = this.compRoles.find(x => x.id === 'ceiling');
+        const posTxt = p => (p == null ? '—' : p < 0 ? 'below 0%' : p > 1 ? 'beyond 100%' : `${Math.round(p * 100)}%`);
+        const posChip = p => (p == null ? '—' : `<span class="pos-chip" style="background:${R.color(rankOf(p))};color:${R.ink(rankOf(p))}">${posTxt(p)}</span>`);
+        const dropped = scored.filter(v => !r.stats[v.id].separates);
+        const rated = scored.filter(v => r.stats[v.id].separates);
+        const groups = [...new Set(rated.map(v => v.group))].map(g => this.themes.find(t => t.id === g)).filter(Boolean);
+        const ratingRow = u => {
+            const h = this.headline(u), p = h.median, rank = h.rank;
+            const at = Math.min(1, Math.max(0, p ?? 0)) * 100;
+            const subs = groups.map(t => `<div class="sq-group"><span class="sq-label">${escapeHtml(t.label)}${R.basis && !R.basis.includes(t.id) ? `: ${escapeHtml(R.label(u.byGroup[t.id]?.rank, u.byGroup[t.id]?.median).toLowerCase())}` : ''}</span>${rated.filter(v => v.group === t.id).map(v => {
+                const m = u.metrics[v.id] || {};
+                return `<span class="sq" data-v="${v.id}" style="background:${R.color(m.rank)}"></span>`;
+            }).join('')}</div>`).join('');
+            return `<div class="rating-row ${this.highlight === u.id ? 'on' : ''}" data-id="${u.id}">
+                <div class="rating-head">
+                    <span class="rank-badge" style="background:${R.color(rank)};color:${R.ink(rank)}">${rank ?? '–'}</span>
+                    <span class="farm-name">${escapeHtml(this.focalName(u.id))}</span>
+                    <span class="rating-label">${escapeHtml(R.label(rank, p))}</span>
+                </div>
+                <div class="rating-track" aria-hidden="true">${R.colors.map(c => `<span style="background:${c}"></span>`).join('')}${p == null ? '' : `<i class="marker${p < 0 ? ' below' : p > 1 ? ' beyond' : ''}" style="left:${at}%"></i>`}</div>
+                <div class="track-ends"><span>${escapeHtml(R.floorA)}</span><span>${escapeHtml(R.ceilA)}</span></div>
+                <div class="sq-row">${subs}</div>
+            </div>`;
+        };
+        const counts = [0, 0, 0, 0, 0];
+        let below = 0;
+        units.forEach(u => { const h = this.headline(u); if (h.median < 0) below++; else if (h.rank) counts[h.rank - 1]++; });
+        const nUnit = n => `${n} ${n === 1 ? (this.focalRole.singular || 'unit').toLowerCase() : this.focalRole.label.toLowerCase()}`;
+        const parts = [
+            counts[3] + counts[4] ? `${nUnit(counts[3] + counts[4])} close to or as good as ${R.ceilA}` : '',
+            counts[2] ? `${nUnit(counts[2])} halfway to ${R.ceilA}` : '',
+            counts[0] + counts[1] ? `${nUnit(counts[0] + counts[1])} like or a little better than ${R.floorA}` : '',
+            below ? `${nUnit(below)} below ${R.floorA}` : '',
+        ].filter(Boolean);
+        const summary = parts.length ? `${parts.join('; ')}.`.replace(/^./, c => c.toUpperCase()) : 'No unit could be rated.';
 
         rep.innerHTML = `
             <div class="report-head">
@@ -405,53 +469,12 @@ class Compare {
                 in ${escapeHtml(strataText)}.</p>
 
             <div class="card theme-card" style="--c:${this.focalRole.color}">
-                <div class="card-head"><h3>Basket summary</h3></div>
-                <div class="tiles" data-n="3">
-                    <div class="tile"><div class="tile-label">Median percentile among ${escapeHtml(floorRole?.label.toLowerCase() || 'floor')} units</div>
-                        <div class="tile-value">${pctTxt(b.floorPct.median)}</div>
-                        <div class="tile-note">Across ${b.floorPct.n} metrics, at the focal set's median value. 50 is the floor's own median.</div></div>
-                    <div class="tile"><div class="tile-label">Median contrast with the ${escapeHtml(floorRole?.label.toLowerCase() || 'floor')}</div>
-                        <div class="tile-value">${contrastTxt(b.contrast.median)}</div>
-                        <div class="tile-note">${loo(b.contrast)}</div></div>
-                    <div class="tile"><div class="tile-label">Median retention of the ${escapeHtml(ceilRole?.label.toLowerCase() || 'ceiling')}</div>
-                        <div class="tile-value">${retTxt(b.retention.median)}</div>
-                        <div class="tile-note">The focal value as a share of the ${escapeHtml(ceilRole?.label.toLowerCase() || 'ceiling')} median.</div></div>
-                </div>
-                <p class="card-blurb">The contrast follows the arithmetic of the Wallacea Trust avoided-loss pathway, a percentage difference between two sets of sites measured at one time, summarised by the median across the basket. A protected area is not a reference site under that methodology, and a spatial contrast differs between sites for every reason other than management, so these figures support no claim that management caused the difference.</p>
-            </div>
-
-            <div class="card theme-card" style="--c:var(--primary)">
-                <div class="card-head"><h3>Metrics</h3></div>
-                <div class="table-wrap"><table class="cmp-table">
-                    <thead><tr><th>Metric</th><th>Focal median</th><th>${escapeHtml(floorRole?.label || 'Floor')} median</th><th>${escapeHtml(ceilRole?.label || 'Ceiling')} median</th><th title="Percentile among floor units, direction-adjusted">Floor percentile</th><th title="Percentile among ceiling units, direction-adjusted">Ceiling percentile</th><th>Contrast</th><th>Retention</th></tr></thead>
-                    <tbody>${scored.map(v => {
-                        const s = r.stats[v.id], m = r.set.metrics[v.id] || {};
-                        return `<tr><td>${escapeHtml(v.label)}${v.dir === -1 ? ' <span class="dir" title="Lower is better">↓</span>' : ''}${lic(v)}</td>
-                            <td>${vfmt(s.focal.median, v)}</td><td>${vfmt(s.floor.median, v)}</td><td>${vfmt(s.ceiling.median, v)}</td>
-                            <td>${pctTxt(m.floorPct)}</td><td>${pctTxt(m.ceilPct)}</td><td>${contrastTxt(m.contrast)}</td><td>${retTxt(m.retention)}</td></tr>`;
-                    }).join('')}</tbody>
-                </table></div>
-                <div class="strip-legend">
-                    <span><i style="background:${floorRole?.color}"></i>${escapeHtml(floorRole?.label || 'Floor')} units, above the axis</span>
-                    <span><i style="background:${ceilRole?.color}"></i>${escapeHtml(ceilRole?.label || 'Ceiling')} units, below</span>
-                    <span><i class="dm" style="background:${this.focalRole.color}"></i>${escapeHtml(this.focalRole.label)}</span>
-                </div>
-                <div id="strip-scored"></div>
-            </div>
-
-            <div class="card theme-card" style="--c:${this.focalRole.color}">
-                <div class="card-head"><h3>${escapeHtml(this.focalRole.label)}</h3></div>
-                <p class="card-blurb">Each unit's basket medians. Select a row to mark the unit on the map and in the charts.</p>
-                <div class="table-wrap"><table class="cmp-table units-table">
-                    <thead><tr><th>Name</th><th>Area</th><th>Floor percentile</th><th>Contrast</th><th>Retention</th>${covs.length ? '<th>Covariates outside the floor range</th>' : ''}</tr></thead>
-                    <tbody>${units.map(u => {
-                        const fe = this.sets.focal.editor.units.find(x => x.id === u.id);
-                        const out = covs.filter(v => u.metrics[v.id]?.outside?.floor).map(v => v.label);
-                        return `<tr data-id="${u.id}" class="${this.highlight === u.id ? 'on' : ''}"><td>${escapeHtml(this.focalName(u.id))}</td><td>${fe ? fmtHa(fe.ha) : '—'}</td>
-                            <td>${pctTxt(u.basket.floorPct.median)}</td><td>${contrastTxt(u.basket.contrast.median)}${u.basket.contrast.loo ? `<span class="loo"> ${contrastTxt(u.basket.contrast.loo[0])} to ${contrastTxt(u.basket.contrast.loo[1])}</span>` : ''}</td>
-                            <td>${retTxt(u.basket.retention.median)}</td>${covs.length ? `<td>${out.length ? escapeHtml(out.join(', ')) : 'none'}</td>` : ''}</tr>`;
-                    }).join('')}</tbody>
-                </table></div>
+                <div class="card-head"><h3>Ratings</h3></div>
+                <p class="rating-summary">${escapeHtml(summary)}</p>
+                <div class="rating-scale">${R.labels.map((l, i) => `<span><i style="background:${R.colors[i]}"></i>${escapeHtml(l)}</span>`).join('')}</div>
+                <div class="rating-rows">${units.map(ratingRow).join('')}</div>
+                <p class="card-blurb">Each ${escapeHtml((this.focalRole.singular || 'unit').toLowerCase())} is placed, metric by metric, between ${escapeHtml(R.floorA)} at the left of the bar and ${escapeHtml(R.ceilA)} at the right, both in the same ${escapeHtml(this.cmp.strata?.plural || 'region')}. The bar is split into five equal bands, the five ranks of the Wallacea Trust methodology, and the rating is the band of the median across ${R.basis ? `the ${escapeHtml(groups.filter(t => R.basis.includes(t.id)).map(t => t.label.toLowerCase()).join(' and '))} metrics` : 'the metrics'}. Each square is one metric. ${R.basis && groups.some(t => !R.basis.includes(t.id)) ? `${escapeHtml(groups.filter(t => !R.basis.includes(t.id)).map(t => t.label).join(' and '))} is rated separately and not counted in the headline: ${escapeHtml(this.themes.find(t => !R.basis.includes(t.id) && t.scored !== false)?.blurb || '')} ` : ''}${dropped.length ? `Not used in the ratings, because ${escapeHtml(R.floorA)} and ${escapeHtml(R.ceilA)} here score about the same on them: ${escapeHtml(dropped.map(v => v.label).join(', '))}.` : ''}</p>
+                <p class="card-blurb">These are global remote-sensing and range-map layers, not the field surveys the methodology requires, and a protected area is not a reference site under it. A rating shows how a place compares; it does not show that its management caused the difference.</p>
             </div>
 
             ${covs.length ? `
@@ -463,16 +486,49 @@ class Compare {
                     <tbody>${covs.map(v => {
                         const s = r.stats[v.id], rng = x => (x.n ? `${vfmt(x.min, v)} to ${vfmt(x.max, v)}` : '—');
                         const n = v.range_check === false ? null : units.filter(u => u.metrics[v.id]?.outside?.floor).length;
-                        return `<tr><td>${escapeHtml(v.label)}</td><td>${rng(s.focal)}</td><td>${rng(s.floor)}</td><td>${rng(s.ceiling)}</td><td>${n == null ? "not checked" : `${n} of ${units.length}`}</td></tr>`;
+                        return `<tr><td>${escapeHtml(v.label)}</td><td>${rng(s.focal)}</td><td>${rng(s.floor)}</td><td>${rng(s.ceiling)}</td><td>${n == null ? 'not checked' : `${n} of ${units.length}`}</td></tr>`;
+                    }).join('')}</tbody>
+                </table></div>
+            </div>` : ''}
+
+            <details class="card details-card">
+                <summary><h3>Detailed scores</h3></summary>
+                <p class="card-blurb">The values behind the ratings. The position is 0% at the ${escapeHtml(floorRole?.label.toLowerCase() || 'floor')} median and 100% at the ${escapeHtml(ceilRole?.label.toLowerCase() || 'ceiling')} median. The percentile is the share of a set's units below the focal value, so 50 is that set's median. The contrast is the percentage difference from the floor median, the arithmetic of the Wallacea Trust avoided-loss pathway, and the retention is the focal value as a share of the ceiling median. Figures for the focal set use the median of the focal units on each metric.</p>
+                <div class="table-wrap"><table class="cmp-table">
+                    <thead><tr><th>Metric</th><th>Focal median</th><th>${escapeHtml(floorRole?.label || 'Floor')} median</th><th>${escapeHtml(ceilRole?.label || 'Ceiling')} median</th><th>Position</th><th title="Percentile among floor units, direction-adjusted">Floor percentile</th><th title="Percentile among ceiling units, direction-adjusted">Ceiling percentile</th><th>Contrast</th><th>Retention</th></tr></thead>
+                    <tbody>${scored.map(v => {
+                        const s = r.stats[v.id], m = r.set.metrics[v.id] || {};
+                        return `<tr class="${s.separates ? '' : 'muted'}"><td>${escapeHtml(v.label)}${v.dir === -1 ? ' <span class="dir" title="Lower is better">↓</span>' : ''}${lic(v)}</td>
+                            <td>${vfmt(s.focal.median, v)}</td><td>${vfmt(s.floor.median, v)}</td><td>${vfmt(s.ceiling.median, v)}</td>
+                            <td>${s.separates ? posChip(m.position) : 'not used'}</td>
+                            <td>${pctTxt(m.floorPct)}</td><td>${pctTxt(m.ceilPct)}</td><td>${contrastTxt(m.contrast)}</td><td>${retTxt(m.retention)}</td></tr>`;
+                    }).join('')}</tbody>
+                </table></div>
+                <div class="strip-legend">
+                    <span><i style="background:${floorRole?.color}"></i>${escapeHtml(floorRole?.label || 'Floor')} units, above the axis</span>
+                    <span><i style="background:${ceilRole?.color}"></i>${escapeHtml(ceilRole?.label || 'Ceiling')} units, below</span>
+                    <span><i class="dm" style="background:${this.focalRole.color}"></i>${escapeHtml(this.focalRole.label)}</span>
+                </div>
+                <div id="strip-scored"></div>
+                <div class="table-wrap"><table class="cmp-table units-table">
+                    <thead><tr><th>Name</th><th>Area</th><th>Position</th><th>Floor percentile</th><th>Contrast</th><th>Retention</th>${covs.length ? '<th>Covariates outside the floor range</th>' : ''}</tr></thead>
+                    <tbody>${units.map(u => {
+                        const fe = this.sets.focal.editor.units.find(x => x.id === u.id);
+                        const out = covs.filter(v => u.metrics[v.id]?.outside?.floor).map(v => v.label);
+                        return `<tr data-id="${u.id}" class="${this.highlight === u.id ? 'on' : ''}"><td>${escapeHtml(this.focalName(u.id))}</td><td>${fe ? fmtHa(fe.ha) : '—'}</td>
+                            <td>${posChip(this.headline(u).median)}${this.headline(u).loo ? `<span class="loo"> ${posTxt(this.headline(u).loo[0])} to ${posTxt(this.headline(u).loo[1])}</span>` : ''}</td>
+                            <td>${pctTxt(u.basket.floorPct.median)}</td><td>${contrastTxt(u.basket.contrast.median)}</td>
+                            <td>${retTxt(u.basket.retention.median)}</td>${covs.length ? `<td>${out.length ? escapeHtml(out.join(', ')) : 'none'}</td>` : ''}</tr>`;
                     }).join('')}</tbody>
                 </table></div>
                 <div id="strip-covs"></div>
-            </div>` : ''}
+            </details>
 
             <div class="card">
                 <div class="card-head"><h3>Methods</h3></div>
                 <div class="method">
                     <p>Each polygon is a unit, represented by the H3 cells it covers: drawn and uploaded polygons at resolution 10 (about 1.5 ha), with a polygon smaller than one cell represented by the cell under an interior point. A unit's value on a metric is the area-weighted mean of the metric over its cells. ${this.cmp.strata ? `Units are split by ${escapeHtml(this.cmp.strata.label.toLowerCase())}; with the landscape set to the same ${escapeHtml(this.cmp.strata.plural || 'strata')}, only the parts of comparison units inside the focal units' ${escapeHtml(this.cmp.strata.plural || 'strata')} count.` : ''}</p>
+                    <p>Each focal unit is placed on every metric between the medians of the two comparison sets: 0% at the median of the ${escapeHtml(floorRole?.label.toLowerCase() || 'floor')} (${escapeHtml(R.floorA)}) and 100% at the median of the ${escapeHtml(ceilRole?.label.toLowerCase() || 'ceiling')} (${escapeHtml(R.ceilA)}). The span is divided into five equal bands, ranks 1 to 5. This follows the Wallacea Trust methodology's structural metrics, where the gap between the project site and its reference site is divided into five equal quintiles, with the project site at Rank 1 and the reference site at Rank 5; here the floor stands where the project's baseline would and the ceiling where the reference site would, an adaptation the methodology does not itself define. A unit's rating is the band of its median position across the selected ${R.basis ? escapeHtml(this.themes.filter(t => R.basis.includes(t.id)).map(t => t.label.toLowerCase()).join(' and ')) + ' ' : ''}metrics${R.basis ? '; the other scored themes are rated the same way and shown beside it' : ''}. A metric is left out of the ratings when its floor and ceiling medians differ by less than 5% of the spread of both sets or of the medians themselves, or when the ceiling is not the better of the two.</p>
                     <p>For each focal unit and metric, the floor percentile is the share of floor units with a lower value plus half of those with an equal one, flipped for metrics where lower is better; the ceiling percentile is the same among ceiling units. The contrast is 100 × (V − M) ÷ M against the floor median M, and the retention is V ÷ C against the ceiling median C (reversed for metrics where lower is better). The basket summary is the median of each across the selected metrics. The focal set's figures use the median value of the focal units on each metric.</p>
                     ${[...new Set(r.vars.map(v => v.theme))].map(id => this.themes.find(t => t.id === id)).filter(t => t?.method).map(t => `<p><b>${escapeHtml(t.label)}.</b> ${escapeHtml(t.method)}</p>`).join('')}
                     <details><summary>SQL for each theme</summary>
@@ -495,7 +551,14 @@ class Compare {
         strip('#strip-scored', scored);
         strip('#strip-covs', covs);
         rep.querySelector('[data-act=csv]').onclick = () => this.downloadCsv();
-        rep.querySelectorAll('.units-table tbody tr').forEach(tr => {
+        rep.querySelectorAll('.rating-row').forEach(row => {
+            const u = units.find(x => x.id === row.dataset.id);
+            row.querySelectorAll('.sq').forEach(sq => {
+                const v = rated.find(x => x.id === sq.dataset.v), m = u.metrics[v.id] || {};
+                hover(sq, `<b>${escapeHtml(v.label)}</b>: ${vfmt(m.value, v)}<br>${escapeHtml(R.label(m.rank, m.position))} (${posTxt(m.position)} of the way)`);
+            });
+        });
+        rep.querySelectorAll('.units-table tbody tr, .rating-row').forEach(tr => {
             tr.onclick = () => {
                 this.highlight = this.highlight === tr.dataset.id ? null : tr.dataset.id;
                 this.renderResults();
@@ -511,11 +574,11 @@ class Compare {
         const q = v => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
         const lines = [
             `# ${this.app.title || 'Comparison'}: ${this.country.name}; landscape: ${this.landscape}; ${this.compRoles.map(x => `${x.label}: ${this.setLabel(x)}`).join('; ')}; generated ${new Date().toISOString()}`,
-            ['unit_id', 'name', 'variable', 'label', 'value', 'floor_percentile', 'ceiling_percentile', 'contrast_pct', 'retention', 'outside_floor_range'].join(','),
+            ['unit_id', 'name', 'unit_rating', 'variable', 'label', 'value', 'position', 'rank', 'floor_percentile', 'ceiling_percentile', 'contrast_pct', 'retention', 'outside_floor_range'].join(','),
         ];
         for (const u of r.units) for (const v of r.vars) {
             const m = u.metrics[v.id] || {};
-            lines.push([u.id, this.focalName(u.id), v.id, v.label, m.value, m.floorPct, m.ceilPct, m.contrast, m.retention, m.outside?.floor ?? ''].map(q).join(','));
+            lines.push([u.id, this.focalName(u.id), this.headline(u).rank, v.id, v.label, m.value, m.position, m.rank, m.floorPct, m.ceilPct, m.contrast, m.retention, m.outside?.floor ?? ''].map(q).join(','));
         }
         const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
         const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `comparison-${this.country.id}.csv` });
@@ -532,8 +595,8 @@ class Compare {
         m.addSource('cmp-units', { type: 'geojson', data: empty });
         m.addLayer({ id: 'cmp-cells-pt', type: 'circle', source: 'cmp-cells', maxzoom: 11, paint: { 'circle-radius': 2.2, 'circle-color': ['get', 'color'], 'circle-opacity': ['case', ['get', 'in'], 0.75, 0.15] } }, 'ref');
         m.addLayer({ id: 'cmp-cells-hex', type: 'fill', source: 'cmp-cells', minzoom: 11, filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['case', ['get', 'in'], 0.45, 0.1] } }, 'ref');
-        m.addLayer({ id: 'cmp-units-fill', type: 'fill', source: 'cmp-units', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.22 } });
-        m.addLayer({ id: 'cmp-units-line', type: 'line', source: 'cmp-units', paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'on'], 3.5, 2] } });
+        m.addLayer({ id: 'cmp-units-fill', type: 'fill', source: 'cmp-units', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['case', ['get', 'rated'], 0.8, 0.22] } });
+        m.addLayer({ id: 'cmp-units-line', type: 'line', source: 'cmp-units', paint: { 'line-color': ['case', ['get', 'rated'], '#22201f', ['get', 'color']], 'line-width': ['case', ['get', 'on'], 3.5, 1.5] } });
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
         m.on('mousemove', 'cmp-units-fill', e => {
             const p = e.features[0]?.properties;
@@ -551,9 +614,23 @@ class Compare {
         for (const r of this.roles) {
             const set = this.sets[r.id];
             if (!set || set.mode !== 'custom') continue;
-            for (const u of set.editor.units) feats.push({ type: 'Feature', geometry: u.geometry, properties: { name: u.name, role: r.singular || r.label, color: r.color, on: this.highlight === u.id } });
+            for (const u of set.editor.units) {
+                // after a run, focal units take the colour of their rating
+                const scoredU = r.id === 'focal' ? this.result?.units.find(x => x.id === u.id) : null;
+                const R = scoredU ? this.rating() : null;
+                feats.push({ type: 'Feature', geometry: u.geometry, properties: {
+                    name: u.name, role: scoredU ? `${r.singular || r.label}: ${R.label(this.headline(scoredU).rank, this.headline(scoredU).median)}` : r.singular || r.label,
+                    color: scoredU ? R.color(this.headline(scoredU).rank) : r.color, rated: !!scoredU, on: this.highlight === u.id,
+                } });
+            }
         }
         src.setData({ type: 'FeatureCollection', features: feats });
+        const lg = this.$('#map-legend');
+        if (this.result) {
+            const R = this.rating();
+            lg.innerHTML = `<div class="legend-title">Rating</div>${R.labels.map((l, i) => `<div class="legend-row"><i style="background:${R.colors[i]}"></i>${escapeHtml(l)}</div>`).join('')}`;
+            lg.hidden = false;
+        } else lg.hidden = true;
     }
 
     /** Catalog presets on the map: single-cell units from their ids, tile-set units through a filter. */
@@ -619,6 +696,14 @@ class Compare {
     }
 }
 
+/**
+ * Default rating scale: a diverging brown-to-green ramp with a grey midpoint,
+ * checked for colour-blind separation of adjacent bands; every band also
+ * carries its label, so colour is never the only cue.
+ */
+const RATING_COLORS = ['#8c4a12', '#d39a5c', '#dedad2', '#7cb87f', '#2f6f3e'];
+const RATING_LABELS = ['Like {floor}', 'A little better than {floor}', 'Halfway to {ceiling}', 'Close to {ceiling}', 'As good as {ceiling}'];
+
 function fitGeoms(map, geoms) {
     const b = new maplibregl.LngLatBounds();
     const walk = c => (typeof c[0] === 'number' ? b.extend(c) : c.forEach(walk));
@@ -671,6 +756,34 @@ export const compareCss = `
 .strip-legend i { display: inline-block; width: 12px; height: 8px; margin-right: 5px; opacity: .6; }
 .strip-legend i.dm { width: 8px; height: 8px; transform: rotate(45deg); opacity: 1; }
 .method p { color: var(--text-2); font-size: 13px; margin: 0 0 8px; }
+.rating-summary { font-size: 15px; margin: 2px 0 10px; }
+.rating-scale { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--text-2); margin-bottom: 10px; }
+.rating-scale i, #map-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.rating-row { padding: 10px 8px; border-top: 1px solid var(--line); cursor: pointer; border-radius: 6px; }
+.rating-row:hover { background: var(--hover); }
+.rating-row.on { background: var(--primary-wash); }
+.rating-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.rank-badge { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; font-weight: 700; font-size: 16px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.farm-name { font-weight: 650; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rating-label { margin-left: auto; font-size: 13.5px; font-weight: 600; color: var(--text-2); text-align: right; }
+.rating-track { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; height: 10px; }
+.rating-track span { border-radius: 2px; opacity: .85; }
+.rating-track .marker { position: absolute; top: -5px; width: 4px; height: 20px; margin-left: -2px; background: #22201f; border-radius: 2px; box-shadow: 0 0 0 2px #fff; }
+.rating-track .marker.below::before, .rating-track .marker.beyond::before { position: absolute; top: 2px; font-size: 11px; font-style: normal; color: #22201f; }
+.rating-track .marker.below::before { content: '◀'; left: -12px; }
+.rating-track .marker.beyond::before { content: '▶'; left: 6px; }
+.track-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-top: 3px; }
+.sq-row { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
+.sq-group { display: flex; align-items: center; gap: 3px; }
+.sq-label { font-size: 11px; color: var(--text-3); margin-right: 4px; }
+.sq { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.pos-chip { display: inline-block; min-width: 46px; text-align: center; border-radius: 4px; padding: 0 5px; font-weight: 600; }
+.cmp-table tr.muted td { color: var(--text-3); }
+.details-card > summary { cursor: pointer; list-style: revert; }
+.details-card > summary h3 { display: inline; font-size: 15px; margin: 0; }
+#map-legend { font-size: 12px; padding: 6px 8px; }
+#map-legend .legend-title { font-weight: 650; margin-bottom: 3px; }
+#map-legend .legend-row { display: flex; align-items: center; gap: 2px; margin: 2px 0; white-space: nowrap; }
 .method pre { background: var(--code-bg); padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 11.5px; max-height: 320px; }
 .method h4 { margin: 10px 0 4px; font-size: 13px; }
 `;

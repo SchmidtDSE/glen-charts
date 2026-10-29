@@ -18,6 +18,16 @@
  *                       arithmetic of the Wallacea Trust avoided-loss pathway;
  *                       100 × (M − V) ÷ M when dir = −1
  *   retention           V ÷ C against the ceiling median C; C ÷ V when dir = −1
+ *   position            (V − M) ÷ (C − M): 0 at the floor median, 1 at the ceiling
+ *                       median, for either direction. Null when the two medians
+ *                       are too close to separate (a gap under MIN_GAP of both
+ *                       the spread of the two sets and the medians' size) or
+ *                       point the wrong way.
+ *   rank                1–5: the position in five equal bands from floor to
+ *                       ceiling, the quintile ranks of the Wallacea Trust
+ *                       methodology with the floor as rank 1 and the ceiling as
+ *                       rank 5; below the floor is rank 1, beyond the ceiling 5.
+ * The headline for a unit is the rank of its median position across the metrics.
  * The basket summary is the median of each across the selected metrics, with
  * the leave-one-metric-out range of that median. Unscored variables
  * (covariates) get an `outside` flag when the focal value lies outside the
@@ -78,6 +88,12 @@ function setStats(units, variable) {
         : { n: 0, median: null, min: null, max: null, values };
 }
 
+/** The smallest gap between floor and ceiling medians, as a share of the spread of both sets and of the medians' size, that a metric needs to place units between them. */
+export const MIN_GAP = 0.05;
+
+/** Rank 1–5 of a position: five equal bands from floor (0) to ceiling (1), clamped. */
+export const rankOf = p => (Number.isFinite(p) ? Math.min(5, Math.max(1, Math.floor(p * 5) + 1)) : null);
+
 const ratio = (a, b) => (Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : null);
 
 /** Median of finite values and the leave-one-out range of that median. */
@@ -91,7 +107,8 @@ export function basket(vals) {
 /**
  * Score focal units against the floor and ceiling.
  *   units      Map from combineStrata (all groups)
- *   variables  [{ id, dir, scored }] — the selected metrics and covariates
+ *   variables  [{ id, dir, scored, group? }] — the selected metrics and covariates;
+ *              `group` (e.g. the theme) gives each unit a rank per group too
  *   groups     { focal: 'focal', floor: 'floor', ceiling: 'ceiling' } group names
  * Returns { stats: { variable: { floor, ceiling, focal } }, units: [...], set }.
  */
@@ -99,7 +116,18 @@ export function scoreUnits(units, variables, groups = { focal: 'focal', floor: '
     const by = g => [...units.values()].filter(u => u.grp === g);
     const focal = by(groups.focal), floor = by(groups.floor), ceiling = by(groups.ceiling);
     const stats = {};
-    for (const v of variables) stats[v.id] = { floor: setStats(floor, v.id), ceiling: setStats(ceiling, v.id), focal: setStats(focal, v.id) };
+    for (const v of variables) {
+        const st = stats[v.id] = { floor: setStats(floor, v.id), ceiling: setStats(ceiling, v.id), focal: setStats(focal, v.id) };
+        // whether the floor and ceiling medians are far enough apart, in the right
+        // direction, to place a unit between them
+        const lo = st.floor.median, hi = st.ceiling.median;
+        if (v.scored !== false && lo != null && hi != null) {
+            const spread = Math.max(st.floor.max, st.ceiling.max) - Math.min(st.floor.min, st.ceiling.min);
+            const dir = v.dir === -1 ? -1 : 1;
+            const gap = Math.abs(hi - lo);
+            st.separates = (hi - lo) * dir > 0 && gap >= MIN_GAP * spread && gap >= MIN_GAP * Math.max(Math.abs(lo), Math.abs(hi));
+        } else st.separates = false;
+    }
 
     const scoreOne = values => {
         const metrics = {};
@@ -124,13 +152,26 @@ export function scoreUnits(units, variables, groups = { focal: 'focal', floor: '
                 const c = ratio(dir === 1 ? x - fm : fm - x, fm);
                 m.contrast = c == null ? null : 100 * c;
                 m.retention = dir === 1 ? ratio(x, cm) : ratio(cm, x);
+                m.position = s.separates ? (x - fm) / (cm - fm) : null;
+                m.rank = rankOf(m.position);
             }
             metrics[v.id] = m;
         }
-        const scored = variables.filter(v => v.scored !== false).map(v => metrics[v.id]);
+        const scoredVars = variables.filter(v => v.scored !== false);
+        const scored = scoredVars.map(v => metrics[v.id]);
+        const position = basket(scored.map(m => m.position));
+        // the same median position within each group of metrics (e.g. a theme)
+        const groupsOf = [...new Set(scoredVars.map(v => v.group).filter(Boolean))];
+        const byGroup = Object.fromEntries(groupsOf.map(g => {
+            const b = basket(scoredVars.filter(v => v.group === g).map(v => metrics[v.id].position));
+            return [g, { ...b, rank: rankOf(b.median) }];
+        }));
         return {
             metrics,
+            rank: rankOf(position.median),
+            byGroup,
             basket: {
+                position,
                 floorPct: basket(scored.map(m => m.floorPct)),
                 ceilPct: basket(scored.map(m => m.ceilPct)),
                 contrast: basket(scored.map(m => m.contrast)),
