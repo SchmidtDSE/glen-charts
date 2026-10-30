@@ -78,12 +78,17 @@ export function quantileCuts(vals, k = LAYER_RAMP.length) {
     return out;
 }
 
+/** The legend's label for the lowest class: just the value when every unit in it has that value (the cut is the data minimum). */
+export const lowestText = (cut, min, text) => (Number.isFinite(min) && cut <= min ? text : `${text} or less`);
+
 /** The class of x: how many cut points lie below it. */
 export const classOf = (x, cuts) => cuts.filter(c => x > c).length;
 
 /** Colours for n classes, spread over the ramp so that few classes still contrast. */
 export const rampFor = n => (n <= 1 ? [LAYER_RAMP[LAYER_RAMP.length - 1]]
     : Array.from({ length: n }, (_, i) => LAYER_RAMP[Math.round((i * (LAYER_RAMP.length - 1)) / (n - 1))]));
+
+const minOf = vals => vals.reduce((m, x) => (Number.isFinite(x) && x < m ? x : m), Infinity);
 
 export class LayerMap {
     /**
@@ -153,6 +158,7 @@ export class LayerMap {
         if (token !== this.token) return;
         const ovVals = ov?.values?.[v.id];
         const cuts = ovVals ? quantileCuts(ovVals) : this._liveCuts?.[v.id] || null;
+        const min = ovVals ? minOf(ovVals) : this._liveMin?.[v.id];
         const res = resAtZoom(m.getZoom());
         let rows;
         if (res === OVERVIEW_RES) {
@@ -171,18 +177,20 @@ export class LayerMap {
             const grid = [Math.floor(box[0] / sx) * sx, Math.floor(box[1] / sy) * sy, Math.ceil(box[2] / sx) * sx, Math.ceil(box[3] / sy) * sy];
             const n = bboxKm2(grid) / AREA_KM2[res];
             if (n > MAX_CELLS) { this._legend({ note: 'Zoom in further to see this layer in detail.' }); return; }
-            this._legend({ cuts, loading: true, res });
+            this._legend({ cuts, min, loading: true, res });
             try {
                 rows = await this.query(layerSql(theme.sql.units, countryTokens(this.country), viewUnitsSql(grid, res), v.id));
             } catch (err) {
-                if (token === this.token) this._legend({ cuts, res, note: `The layer failed to load: ${String(err.message).split('\n')[0].slice(0, 160)}` });
+                if (token === this.token) this._legend({ cuts, min, res, note: `The layer failed to load: ${String(err.message).split('\n')[0].slice(0, 160)}` });
                 return;
             }
             if (token !== this.token) return;
         }
-        const useCuts = cuts || ((this._liveCuts ??= {})[v.id] = quantileCuts(rows.map(r => Number(r.value))));
+        const vals = rows.map(r => Number(r.value));
+        const useCuts = cuts || ((this._liveCuts ??= {})[v.id] = quantileCuts(vals));
+        const useMin = min ?? ((this._liveMin ??= {})[v.id] = minOf(vals));
         this._setData(rows, useCuts, res);
-        this._legend({ cuts: useCuts, res, empty: !rows.length });
+        this._legend({ cuts: useCuts, min: useMin, res, empty: !rows.length });
     }
 
     _setData(rows, cuts = [], res = OVERVIEW_RES) {
@@ -202,7 +210,7 @@ export class LayerMap {
         src.setData({ type: 'FeatureCollection', features });
     }
 
-    _legend({ cuts = null, res = null, loading = false, note = '', empty = false } = {}) {
+    _legend({ cuts = null, min = null, res = null, loading = false, note = '', empty = false } = {}) {
         const v = this._var(), el = this.legend;
         if (!v) { el.hidden = true; return; }
         const about = this.aboutUrl(v.id);
@@ -210,7 +218,7 @@ export class LayerMap {
         el.innerHTML = `
             <div class="lyr-head"><span class="title">${escapeHtml(v.label)}</span><button type="button" class="lyr-close" aria-label="Hide layer" title="Hide layer">×</button></div>
             ${used.length ? `<div class="ramp">${used.map(c => `<span style="background:${c}"></span>`).join('')}</div>
-            <div class="ends"><span>${cuts.length ? `${valueText(cuts[0], v)} or less` : ''}</span><span>${cuts.length ? `over ${valueText(cuts[cuts.length - 1], v)}` : ''}</span></div>` : ''}
+            <div class="ends"><span>${cuts.length ? lowestText(cuts[0], min, valueText(cuts[0], v)) : ''}</span><span>${cuts.length ? `over ${valueText(cuts[cuts.length - 1], v)}` : ''}</span></div>` : ''}
             <div class="tile-note">${loading ? 'Loading…' : empty ? 'No data in view.' : note || (res ? `Hexagons of ${areaText(res)}. Colour classes hold about equal numbers of ${escapeHtml(this.country?.name || '')} hexagons.` : '')}</div>
             ${about ? `<a class="lyr-about" href="${escapeHtml(about)}" target="_blank" rel="noopener">About this layer</a>` : ''}`;
         el.hidden = false;

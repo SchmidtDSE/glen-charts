@@ -265,7 +265,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.7.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.7.1 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

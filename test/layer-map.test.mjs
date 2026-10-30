@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resAtZoom, quantileCuts, classOf, rampFor, LAYER_RAMP, viewUnitsSql, layerSql, overviewUnitsSql, OVERVIEW_RES } from '../core/layer-map.js';
+import { resAtZoom, quantileCuts, classOf, lowestText, rampFor, LAYER_RAMP, viewUnitsSql, layerSql, overviewUnitsSql, OVERVIEW_RES } from '../core/layer-map.js';
 
 test('resAtZoom: overview below zoom 8, then finer every two levels', () => {
     assert.equal(resAtZoom(5), OVERVIEW_RES);
@@ -42,4 +42,10 @@ test('classOf: ties at a cut stay in the lower class', () => {
 test('rampFor: few classes take the ends of the ramp', () => {
     assert.deepEqual(rampFor(2), [LAYER_RAMP[0], LAYER_RAMP[6]]);
     assert.deepEqual(rampFor(7), LAYER_RAMP);
+});
+
+test('lowestText: a lowest cut at the data minimum is that value alone', () => {
+    assert.equal(lowestText(0, 0, '0%'), '0%');
+    assert.equal(lowestText(5, 0, '5%'), '5% or less');
+    assert.equal(lowestText(5, undefined, '5%'), '5% or less');
 });
