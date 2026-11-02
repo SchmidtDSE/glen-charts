@@ -306,6 +306,14 @@ details.method pre {
 }
 .param-stops button:hover { color: var(--text); }
 .param-stops button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+/* "control": "number" params: a box for a typed value, held to the nearest option */
+#step-params .param-number + .step-label { margin-top: 8px; }
+.param-number input[type="number"] {
+    width: 8em; padding: 4px 8px; font: inherit; color: var(--text);
+    background: var(--card-bg); border: 1px solid var(--line-strong); border-radius: 6px;
+}
+.param-number input[type="number"]:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.param-number .param-range { margin-top: 4px; }
 #source-steps:not(:has(> :not([hidden]))) { display: none; }
 #source-steps { display: contents; }
 

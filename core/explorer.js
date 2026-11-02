@@ -37,11 +37,14 @@
  * that depends on the area (e.g. a species' measured threshold): once an area is chosen, the query
  * is run and each stop is labelled base + offset; note ("Default: the team's value, {}") shows the
  * base, and offset_format ("{} °C from the team's value") labels the offset elsewhere.
+ * A param with "control": "number" is drawn as a box for a typed number. The value is held to
+ * the nearest option, so it stays one of the options; with "relative" the box shows and takes
+ * base + offset, as a relative slider's stops do.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, paramKey, paramTokens } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, nearestOption, paramKey, paramTokens } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -290,7 +293,11 @@ class Explorer {
         // (ordered options such as a resolution); the default is buttons.
         step.innerHTML = app.params.map(p => `
             <div class="step-label">${escapeHtml(p.label || p.id)}</div>
-            ${p.control === 'slider' ? `
+            ${p.control === 'number' ? `
+            <div class="param-number" data-param="${escapeHtml(p.id)}">
+                <input type="number" inputmode="decimal" step="any" aria-label="${escapeHtml(p.label || p.id)}">
+                <div class="step-help param-range"></div>
+            </div>` : p.control === 'slider' ? `
             <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
                 <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
                 <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
@@ -314,6 +321,18 @@ class Explorer {
                 b.onclick = () => this.setParam(p.id, b.dataset.value);
             });
         });
+        step.querySelectorAll('.param-number').forEach(g => {
+            const p = app.params.find(x => x.id === g.dataset.param);
+            const input = g.querySelector('input');
+            input.onchange = () => {
+                const typed = Number(input.value);
+                if (input.value.trim() === '' || !Number.isFinite(typed)) { this.markParams(); return; }
+                const v = nearestOption(p, typed - numberBase(g));
+                if (String(v) === String(this.state.params[p.id])) this.markParams();
+                else this.setParam(p.id, v);
+            };
+            input.onkeydown = e => { if (e.key === 'Enter') input.onchange(); };
+        });
         this.markParams();
         this.relabelRelative();
     }
@@ -325,8 +344,8 @@ class Explorer {
      */
     async relabelRelative() {
         const app = this.config.app, s = this.state, token = s.token;
-        for (const p of app.params.filter(x => x.relative && x.control === 'slider')) {
-            const g = this.$(`#step-params .param-slider[data-param="${p.id}"]`);
+        for (const p of app.params.filter(x => x.relative && (x.control === 'slider' || x.control === 'number'))) {
+            const g = this.$(`#step-params [data-param="${p.id}"]`);
             const note = this.$(`#step-params [data-base="${p.id}"]`);
             if (!g) continue;
             const r = p.relative;
@@ -340,6 +359,10 @@ class Explorer {
                 if (token !== s.token) return;      // the area or a setting changed meanwhile
             }
             const known = Number.isFinite(base);
+            if (p.control === 'number') {
+                g.dataset.base = known ? String(base) : '';
+                this.markNumber(g, p);
+            }
             g.querySelectorAll('.param-stops button').forEach(b => {
                 const d = Number(b.dataset.value);
                 b.textContent = known ? fmt(base + d, r.format || 'num1') : optionLabel({ relative: {} }, b.dataset.value);
@@ -355,8 +378,30 @@ class Explorer {
         this.$('#step-params').querySelectorAll('[data-param]').forEach(g => {
             const v = String(this.state.params[g.dataset.param]);
             if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
+            else if (g.classList.contains('param-number')) this.markNumber(g, this.config.app.params.find(x => x.id === g.dataset.param));
             else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
         });
+    }
+
+    /**
+     * A "control": "number" param: the box shows the value, or base + offset for a relative
+     * param whose base is known, and the line under it gives the range a typed value is held to.
+     */
+    markNumber(g, p) {
+        const base = numberBase(g);
+        const vals = p.options.map(o => Number(optionValue(o)));
+        const shown = v => +(base + v).toFixed(6);
+        const input = g.querySelector('input');
+        input.value = String(shown(Number(this.state.params[p.id])));
+        input.min = String(shown(Math.min(...vals)));
+        input.max = String(shown(Math.max(...vals)));
+        // the ends as the box holds them, so the range matches what a typed value snaps to
+        const f = p.relative ? '{}' : (p.format || '{}');
+        const end = v => f.replace('{}', String(shown(v)));
+        g.querySelector('.param-range').textContent = p.relative && !g.dataset.base
+            ? 'Choose an area to enter a value.'
+            : `Enter a value from ${end(Math.min(...vals))} to ${end(Math.max(...vals))}.`;
+        input.disabled = !!p.relative && !g.dataset.base;
     }
 
     markSlider(g, v, setInput = false) {
@@ -1006,3 +1051,10 @@ function sourcesHtml(sources) {
 }
 
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });
+
+/** The base a number box's value is offset from: the area's value for a relative param, else 0. */
+function numberBase(g) {
+    const b = Number(g.dataset.base);
+    return g.dataset.base && Number.isFinite(b) ? b : 0;
+}
+

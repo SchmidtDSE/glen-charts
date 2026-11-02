@@ -133,6 +133,19 @@ export const optionLabel = (p, o) => {
     return f ? f.replace('{}', text) : text;
 };
 
+/**
+ * The option nearest to a typed number, so a number box still sets one of the param's options
+ * (and so stays safe in SQL). A value past either end is held to that end.
+ */
+export function nearestOption(p, x) {
+    let best = optionValue(p.options[0]);
+    for (const o of p.options) {
+        const v = optionValue(o);
+        if (Math.abs(Number(v) - x) < Math.abs(Number(best) - x)) best = v;
+    }
+    return best;
+}
+
 /** { WIDTH: '10', ... } for template expansion. */
 export function paramTokens(app, params = {}) {
     const out = {};
