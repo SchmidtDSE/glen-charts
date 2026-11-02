@@ -101,6 +101,8 @@ A slider param can hold offsets from a value that depends on the chosen area, su
 
 Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
 
+With `"control": "number"` a param is drawn as a box for a typed number instead, for a setting a reader may want to set exactly, such as a threshold. A typed value is held to the nearest option (and to the first or last option past either end), so the value is still one of the options and still safe in SQL; give the options at the precision the box should take, such as steps of 0.1. With `relative` the box shows and takes absolute values, base plus offset, and is disabled until an area is chosen. The line under the box gives the range a value is held to.
+
 ## Themes
 
 `config/themes/<id>/theme.json`:
