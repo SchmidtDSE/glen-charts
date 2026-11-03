@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.5.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.9.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -102,6 +102,17 @@ A slider param can hold offsets from a value that depends on the chosen area, su
 Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
 
 With `"control": "number"` a param is drawn as a box for a typed number instead, for a setting a reader may want to set exactly, such as a threshold. A typed value is held to the nearest option (and to the first or last option past either end), so the value is still one of the options and still safe in SQL; give the options at the precision the box should take, such as steps of 0.1. With `relative` the box shows and takes absolute values, base plus offset, and is disabled until an area is chosen. The line under the box gives the range a value is held to.
+
+A headline, a chart, a chart series or `app.reference` may carry `"when": { "<param id>": value }` (or a list of values) to apply only at those settings. A setting that changes what a number means can then swap its tiles and labels, and keep a published reference value off a view it does not describe:
+
+```json
+"reference": { "values": "data/report.json", "label": "Report", "when": { "manager": "all" } },
+...
+{ "query": "protection", "field": "frac_gap12", "label": "In 30x30", "when": { "manager": "all" } },
+{ "query": "protection", "field": "frac_gap12", "label": "Manager's land in 30x30", "when": { "manager": ["federal", "state"] } }
+```
+
+The export runs only the queries of the items shown.
 
 ## Themes
 

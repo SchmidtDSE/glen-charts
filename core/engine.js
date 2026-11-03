@@ -122,6 +122,21 @@ export function resolveParams(app, given = {}) {
     return out;
 }
 
+/**
+ * Whether a config item applies at the current settings. `when` maps a param id
+ * to a value or a list of values: { "manager": "all" } or { "manager": ["federal", "state"] }.
+ * Every param named must match; an item without `when` always applies. Used for
+ * headlines, charts, chart series and app.reference.
+ */
+export function matchesWhen(when, app, params = {}) {
+    if (!when) return true;
+    return Object.entries(when).every(([id, want]) => {
+        const p = (app.params || []).find(x => x.id === id);
+        const v = String(params[id] ?? p?.default ?? optionValue(p?.options?.[0]));
+        return (Array.isArray(want) ? want : [want]).some(w => String(w) === v);
+    });
+}
+
 /** An option is a bare value or { value, label }. */
 export const optionValue = o => (o && typeof o === 'object' ? o.value : o);
 export const optionLabel = (p, o) => {
