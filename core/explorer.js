@@ -44,7 +44,7 @@
  * search box gives way to labels.place_hint.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, nearestOption, paramKey, paramTokens } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -291,7 +291,8 @@ class Explorer {
         step.hidden = false;
         // "control": "slider" draws the options as stops on a range input
         // (ordered options such as a resolution); the default is buttons.
-        step.innerHTML = app.params.map(p => `
+        // a param with `when` sits in its own block, hidden at settings it does not apply to
+        step.innerHTML = app.params.map(p => `<div class="param" data-pid="${escapeHtml(p.id)}">
             <div class="step-label">${escapeHtml(p.label || p.id)}</div>
             ${p.control === 'number' ? `
             <div class="param-number" data-param="${escapeHtml(p.id)}">
@@ -306,7 +307,7 @@ class Explorer {
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
             </div>`}
             ${p.relative ? `<div class="step-help param-base" data-base="${escapeHtml(p.id)}" hidden></div>` : ''}
-            ${p.help ? `<div class="step-help">${escapeHtml(p.help)}</div>` : ''}`).join('');
+            ${p.help ? `<div class="step-help">${escapeHtml(p.help)}</div>` : ''}</div>`).join('');
         step.querySelectorAll('.seg[data-param] button').forEach(b => {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
         });
@@ -375,6 +376,10 @@ class Explorer {
     }
 
     markParams() {
+        const app = this.config.app;
+        this.$('#step-params').querySelectorAll('.param[data-pid]').forEach(el => {
+            el.hidden = !paramActive(app.params.find(p => p.id === el.dataset.pid), app, this.state.params);
+        });
         this.$('#step-params').querySelectorAll('[data-param]').forEach(g => {
             const v = String(this.state.params[g.dataset.param]);
             if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
@@ -751,7 +756,7 @@ class Explorer {
 
     paramNote() {
         const app = this.config.app;
-        return app.params.map(p => {
+        return app.params.filter(p => paramActive(p, app, this.state.params)).map(p => {
             const o = p.options.find(x => String(optionValue(x)) === String(this.state.params[p.id]));
             return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
         }).filter(Boolean).join(' · ');
@@ -793,7 +798,7 @@ class Explorer {
         const app = this.config.app;
         const r = this.$('#report');
         const isRegion = aoi.kind === 'state';
-        const paramNote = app.params.map(p => {
+        const paramNote = app.params.filter(p => paramActive(p, app, s.params)).map(p => {
             const o = p.options.find(x => String(optionValue(x)) === String(s.params[p.id]));
             return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
         }).filter(Boolean).join(' · ');

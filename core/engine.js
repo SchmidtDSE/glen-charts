@@ -111,22 +111,31 @@ function commentStart(line) {
 
 /* ------------------------------------------------------------------ params */
 
-/** Current param values: the given ones where valid, else each param's default. */
+/**
+ * Current param values: the given ones where valid, else each param's default.
+ * A param with `when` (see matchesWhen) applies only at those settings of the
+ * params before it; elsewhere it is held at its default, its control is hidden
+ * and it is left out of paramKey. That makes a drill-down: an "agency" param
+ * with "when": { "manager": "federal" }.
+ */
 export function resolveParams(app, given = {}) {
     const out = {};
     for (const p of app.params || []) {
         const want = given[p.id];
-        const hit = want !== undefined && p.options.find(o => String(optionValue(o)) === String(want));
+        const hit = want !== undefined && matchesWhen(p.when, app, out) && p.options.find(o => String(optionValue(o)) === String(want));
         out[p.id] = hit !== undefined && hit !== false ? optionValue(hit) : (p.default ?? optionValue(p.options[0]));
     }
     return out;
 }
 
+/** Whether a param applies at the current settings (its `when`, if any, matches). */
+export const paramActive = (p, app, params = {}) => matchesWhen(p.when, app, params);
+
 /**
  * Whether a config item applies at the current settings. `when` maps a param id
  * to a value or a list of values: { "manager": "all" } or { "manager": ["federal", "state"] }.
  * Every param named must match; an item without `when` always applies. Used for
- * headlines, charts, chart series and app.reference.
+ * headlines, charts, chart series, app.reference and params themselves.
  */
 export function matchesWhen(when, app, params = {}) {
     if (!when) return true;
@@ -172,9 +181,13 @@ export function paramTokens(app, params = {}) {
     return out;
 }
 
-/** "width-10" (sorted by id), or '' when the app has no params. File and cache key part. */
+/**
+ * "width-10" (sorted by id), or '' when the app has no params. File and cache key part.
+ * A param whose `when` does not match is left out, so adding a drill-down param does
+ * not rename the files of the settings it does not apply to.
+ */
 export function paramKey(app, params = {}) {
-    return (app.params || []).slice().sort((a, b) => a.id.localeCompare(b.id))
+    return (app.params || []).filter(p => paramActive(p, app, params)).sort((a, b) => a.id.localeCompare(b.id))
         .map(p => `${p.id}-${String(params[p.id] ?? p.default).replace(/[^A-Za-z0-9.]+/g, '_')}`).join('_');
 }
 
@@ -198,7 +211,12 @@ export function paramCombos(app, pick = {}) {
             : [p.default ?? optionValue(p.options[0])];
         combos = combos.flatMap(c => vals.map(v => ({ ...c, [p.id]: v })));
     }
-    return combos;
+    // a param held at its default where its `when` does not match: keep each setting once
+    const seen = new Set();
+    return combos.map(c => resolveParams(app, c)).filter(c => {
+        const k = JSON.stringify(c);
+        return !seen.has(k) && seen.add(k);
+    });
 }
 
 /* -------------------------------------------------------------------- areas */

@@ -28,7 +28,7 @@
 
 import { renderBarChart } from './charts.js';
 import { fmt, escapeHtml } from './format.js';
-import { optionValue, optionLabel } from './engine.js';
+import { optionValue, optionLabel, paramActive } from './engine.js';
 
 const HARNESS = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0';
 const MAX_ROWS = 100;          // rows of a query result passed back to the model
@@ -120,7 +120,7 @@ class Chat {
         const panels = themes.map(t => `### Panel "${t.label}" (theme ${t.id})\n${t.blurb || ''}\n` +
             Object.keys(t.queries).map(q => `Query ${q}:\n\`\`\`sql\n${t.sql[q].trim()}\n\`\`\``).join('\n')).join('\n\n');
         const types = app.jurisdictions.map(j => `${j.id} (${j.label})`).join(', ');
-        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}`).join('\n');
+        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}${p.when ? ` (only when ${Object.entries(p.when).map(([k, v]) => `${k} is ${[].concat(v).join(' or ')}`).join(' and ')})` : ''}`).join('\n');
         return `You are the assistant in "${app.title || document.title}", a map and report of fixed panels about an area the reader chooses. You answer questions with data, by running SQL on DuckDB (with the spatial, h3 and httpfs extensions) through the query tool. Never invent numbers: every number you state comes from a query result or from current_view.
 
 Area tokens. SQL you pass to query or add_card may use these tokens, which are expanded for the area the reader has chosen:
@@ -153,7 +153,7 @@ ${this.stateText()}`;
         const s = this.ex.state;
         const a = s.aoi;
         const area = a ? `Area: ${a.label} (type ${a.kind}${a.id != null && a.kind !== 'polygon' ? `, id ${a.id}` : ''}).` : 'No area is chosen yet; area tokens are unbound until the reader picks one or you call select_area.';
-        const ps = this.app.params.map(p => `${p.label || p.id}: ${optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
+        const ps = this.app.params.filter(p => paramActive(p, this.app, s.params)).map(p => `${p.label || p.id}: ${optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
         return `${area}${ps ? `\nSettings: ${ps}.` : ''}`;
     }
 
