@@ -27,3 +27,8 @@ test('paramCombos lists each setting once', () => {
     const keys = paramCombos(app, { manager: 'all', agency: 'all' }).map(c => paramKey(app, c));
     assert.deepEqual(keys, ['manager-all', 'agency-all_manager-federal', 'agency-usfs_manager-federal', 'agency-blm_manager-federal', 'manager-state']);
 });
+
+test('paramCombos takes a dependent value given with the param it depends on', () => {
+    const keys = paramCombos(app, { manager: 'federal', agency: 'usfs' }).map(c => paramKey(app, c));
+    assert.deepEqual(keys, ['agency-usfs_manager-federal']);
+});

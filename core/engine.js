@@ -207,7 +207,7 @@ export function paramCombos(app, pick = {}) {
     for (const p of app.params || []) {
         const want = pick[p.id];
         const vals = want === 'all' ? p.options.map(optionValue)
-            : want !== undefined ? [resolveParams(app, { [p.id]: want })[p.id]]
+            : want !== undefined ? [optionValue(p.options.find(o => String(optionValue(o)) === String(want)) ?? p.default ?? p.options[0])]
             : [p.default ?? optionValue(p.options[0])];
         combos = combos.flatMap(c => vals.map(v => ({ ...c, [p.id]: v })));
     }
