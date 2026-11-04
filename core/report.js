@@ -106,6 +106,7 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
                 t.innerHTML = `
                     <div class="tile-label">${escapeHtml(h.label)}</div>
                     <div class="tile-value">${fmt(v, h.format)}</div>
+                    ${h.area_template && aoi.label ? `<div class="tile-area">${escapeHtml(h.area_template.replace('{}', aoi.label))}</div>` : ''}
                     ${wantRegion && sv !== undefined && sv !== null ? `<div class="tile-compare">${escapeHtml(opts.compareLabel)}: ${fmt(sv, h.compare_format || h.format)}</div>` : ''}
                     ${rv != null ? `<div class="tile-compare" title="${escapeHtml(opts.reference.title || opts.reference.label)}">${escapeHtml(opts.reference.label)}: ${fmt(rv, h.format)}</div>` : ''}
                     ${h.detail_field && row?.[h.detail_field] != null ? `<div class="tile-note">${escapeHtml(h.detail_template.replace('{}', fmt(row[h.detail_field], h.detail_format)))}</div>` : ''}

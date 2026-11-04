@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.10.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.11.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -136,6 +136,8 @@ The keys are then `manager-state`, `agency-all_manager-federal` and `agency-usfs
                 "stacked": true, "format": "pct", "compare": { "field": "frac" } } ],
   "map": { "query": "...", "id_field": "GEOID", "value_field": "v", "label": "...", "format": "pct", "ramp": ["#...", "..."] } }
 ```
+
+A headline's `area_template` names the area under the value, with `{}` the area's label: `"area_template": "of {}"` reads "of Sonoma County" on a county and "of California" on the whole region, so a share is not mistaken for the region's when the region's value is shown beneath it.
 
 `map.type: "hex"` draws H3 cells instead of tracts: `id_field` holds each cell's id as a string (`h3_h3_to_string`), so the page needs [h3-js](https://github.com/uber/h3-js).
 
