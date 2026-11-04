@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.9.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.10.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -113,6 +113,15 @@ A headline, a chart, a chart series or `app.reference` may carry `"when": { "<pa
 ```
 
 The export runs only the queries of the items shown.
+
+A param may carry `when` too, which makes it a drill-down: its control shows only at those settings of the params before it, and elsewhere it is held at its default and left out of the file and cache key, so adding it does not rename the files of the settings it does not apply to. Under Federal, say, a second control picks one agency:
+
+```json
+{ "id": "agency", "label": "Agency", "token": "AGENCY", "default": "all", "when": { "manager": "federal" },
+  "options": [{ "value": "all", "label": "All federal" }, { "value": "usfs", "label": "Forest Service" }] }
+```
+
+The keys are then `manager-state`, `agency-all_manager-federal` and `agency-usfs_manager-federal`.
 
 ## Themes
 
