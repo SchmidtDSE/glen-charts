@@ -44,6 +44,12 @@ export async function loadConfig(base = '.', fetchText = defaultFetchText, { the
     const app = JSON.parse(await fetchText(`${base}/config/app.json`));
     app.jurisdictions ??= [];
     app.params ??= [];
+    // the link and set_param separate a multiple param's values with commas
+    for (const p of app.params) {
+        if (!p.multiple) continue;
+        const bad = p.options.map(optionValue).filter(v => String(v).includes(','));
+        if (bad.length) console.warn(`Param "${p.id}" is multiple, but option values may not contain a comma: ${bad.join('; ')}`);
+    }
     const themes = [];
     for (let id of [app.overview, ...(app.themes || [])].filter(Boolean)) {
         const dir = id.includes('/') ? `${base}/${id}` : `${base}/config/themes/${id}`;
@@ -399,7 +405,9 @@ export class Engine {
         const params = aoi.params || {};
         const tokens = { ...paramTokens(app, params), AOI: aoi.sql, AOI10: aoi.sql10 ?? '' };
         if (aoi.id != null && aoi.kind && aoi.kind !== 'polygon') { tokens.ID = String(aoi.id); tokens.KIND = aoi.kind; }
-        if (aoi.ids?.length && aoi.kind && aoi.kind !== 'polygon' && aoi.kind !== 'state') { tokens.IDS = sqlList(aoi.ids); tokens.KIND = aoi.kind; }
+        // an area built with only an id (e.g. by an extension source) still binds {{IDS}}
+        const ids = aoi.ids ?? (aoi.id != null ? [aoi.id] : null);
+        if (ids?.length && aoi.kind && aoi.kind !== 'polygon' && aoi.kind !== 'state') { tokens.IDS = sqlList(ids); tokens.KIND = aoi.kind; }
         if (aoi.bands10) tokens.BANDS10 = aoi.bands10;
         if (aoi.origin) { tokens.ORIGIN_LAT = String(+aoi.origin.lat); tokens.ORIGIN_LON = String(+aoi.origin.lon); }
         Object.assign(tokens, aoi.tokens || {});

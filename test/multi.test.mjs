@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     resolveParams, paramTokens, paramKey, paramCombos, matchesWhen, toggleMulti, paramValueLabel,
-    jurisdictionAoi, Engine,
+    jurisdictionAoi, Engine, loadConfig,
 } from '../core/engine.js';
 
 const ptype = {
@@ -112,6 +112,19 @@ test('IDS is bound for a single named area too', () => {
     const a = jurisdictionAoi(county, { id: '06001', name: 'Alameda' }, app, resolveParams(app));
     assert.equal(e.tokensFor(a).IDS, "'06001'");
     assert.equal(e.tokensFor(a).ID, '06001');
+    // an area built with only an id (as an extension source might) binds it too
+    assert.equal(e.tokensFor({ kind: 'county', id: '06013', sql: 'SELECT 1' }).IDS, "'06013'");
+    assert.ok(!('IDS' in e.tokensFor({ kind: 'polygon', id: 'p1', sql: 'SELECT 1' })));
+});
+
+test('loadConfig warns about a comma in a multiple param option', async () => {
+    const cfg = { params: [{ id: 'x', multiple: true, options: ['a', 'b,c', { value: 'd', label: 'D' }] }, { id: 'y', options: ['e,f'] }] };
+    const warned = [];
+    const warn = console.warn;
+    console.warn = m => warned.push(m);
+    try { await loadConfig('.', async () => JSON.stringify(cfg)); } finally { console.warn = warn; }
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /"x".*b,c/);
 });
 
 test('the same areas in another order share a cache key; the label keeps the order', () => {

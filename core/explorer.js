@@ -651,7 +651,7 @@ class Explorer {
         if (s.jur.multiple) {
             if (replace) s.picked = [feature];
             else if (!s.picked.some(x => sameId(x.id, feature.id))) s.picked = [...s.picked, feature];
-            this.applyPicked({ fitTo: feature });
+            this.applyPicked();
             return;
         }
         s.feature = feature;
@@ -683,7 +683,7 @@ class Explorer {
     }
 
     /** After the chosen areas of a "multiple" area type change: tags, outline, view and profile. */
-    applyPicked({ fitTo = null } = {}) {
+    applyPicked() {
         const s = this.state;
         s.feature = s.picked.length === 1 ? s.picked[0] : null;
         this.$('#place-input').value = '';
@@ -695,7 +695,8 @@ class Explorer {
             return;
         }
         this.hideHint();
-        const boxes = (fitTo ? [fitTo] : s.picked).map(f => ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k])));
+        // fit to every chosen area, so the view shows all that the profile covers
+        const boxes = s.picked.map(f => ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k])));
         this.mapView.select(s.picked.map(f => f.id), unionBbox(boxes));
         this.setAoi(this.areaAoi());
     }
