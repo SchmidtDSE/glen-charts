@@ -105,6 +105,9 @@ export function expand(template, tokens, where = '') {
     }).join('\n');
 }
 
+/** SQL with its `--` comments removed (tokens in comments are never expanded). */
+const stripComments = sql => String(sql ?? '').split('\n').map(line => { const c = commentStart(line); return c < 0 ? line : line.slice(0, c); }).join('\n');
+
 /** Index of a `--` comment outside a quoted string, or -1. */
 function commentStart(line) {
     let q = null;
@@ -262,7 +265,7 @@ export const sqlList = (vals, numeric = false) => vals.map(v => (numeric ? Strin
  */
 export function paramKey(app, params = {}) {
     return (app.params || []).filter(p => paramActive(p, app, params)).sort((a, b) => a.id.localeCompare(b.id))
-        .map(p => `${p.id}-${paramValues(p, params[p.id] ?? paramDefault(p)).map(v => String(v).replace(/[^A-Za-z0-9.]+/g, '_')).join('+')}`).join('_');
+        .map(p => `${p.id}-${paramValues(p, params[p.id] ?? paramDefault(p)).map(v => String(v).replace(/[^A-Za-z0-9.]+/g, '_')).join('~')}`).join('_');
 }
 
 /**
@@ -341,9 +344,11 @@ function multiAoi(jur, features, app, params) {
     const SITE = siteUrl();
     const pt = app ? paramTokens(app, params) : {};
     const pk = app ? paramKey(app, params) : '';
-    const union = tpl => ids.map(id => `SELECT * FROM (${expand(tpl, { ...pt, ID: id, SITE }).trim().replace(/;\s*$/, '')})`).join('\nUNION\n');
+    // the ) on its own line, so a template ending in a -- comment does not swallow it
+    const union = tpl => ids.map(id => `SELECT * FROM (\n${expand(tpl, { ...pt, ID: id, SITE }).trim().replace(/;\s*$/, '')}\n)`).join('\nUNION\n');
     return {
-        key: `${jur.id}:${ids.join('+')}${pk ? '@' + pk : ''}`,
+        // sorted, so the same areas chosen in another order share cached results
+        key: `${jur.id}:${[...ids].sort().join('+')}${pk ? '@' + pk : ''}`,
         kind: jur.id,
         id: null,
         ids,
@@ -403,6 +408,10 @@ export class Engine {
     }
 
     sqlFor(theme, queryName, aoi) {
+        // {{ID}} names one area: say so plainly rather than "unbound token" when several are chosen
+        if (aoi.id == null && aoi.ids?.length > 1 && /\{\{ID\}\}/.test(stripComments(theme.sql[queryName]))) {
+            throw new Error('This panel shows one area at a time. Choose a single area to see it.');
+        }
         return expand(theme.sql[queryName], this.tokensFor(aoi), `${theme.id}/${theme.queries[queryName]?.file || queryName}`);
     }
 

@@ -134,7 +134,8 @@ With `"multiple": true` the reader may choose several options at once. The param
 - The token is a SQL list: `'Acquisition', 'Restoration'`, with quotes doubled inside values, or bare numbers when every option is a number. Use it as `x IN ({{PTYPE}})` or `list_has_any(types, [{{PTYPE}}])`. Extension tokens get the list as `params.ptype`.
 - `any` names an option that stands for all of them. It is exclusive: choosing it clears the others, and choosing another clears it. Clearing the last other pill falls back to it. Without `any`, the last pill cannot be cleared. Test it in SQL as `'Any' IN ({{PTYPE}}) OR ...`.
 - `default` may be one value or a list.
-- The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `+` (`ptype-Acquisition+Restoration`). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
+- Option values may not contain a comma: the link and `set_param` separate values with commas.
+- The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `~` (`ptype-Acquisition~Restoration`; not `+`, which some servers, S3 among them, read as a space in a path). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
 - A `when` that names a multiple param matches only when every chosen value is one it names.
 - `precompute --param ptype=all` runs each option on its own, not every combination. `--param ptype=a,b` runs that one list. Other choices run live.
 - `multiple` uses pills only, not `control: "slider"` or `"number"`.

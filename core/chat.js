@@ -217,8 +217,8 @@ ${this.stateText()}`;
                     if (this.ex.state.view !== 'profile') await this.ex.setView('profile');
                     if (this.ex.state.mode !== jur.id) await this.ex.setMode(jur.id);
                     this.ex.pick(f, { replace: !(add && jur.multiple) });
-                    const all_ = this.ex.chosen();
-                    return all_.length > 1 ? { selected: all_.map(x => x.name), type: jur.id, ids: all_.map(x => x.id) } : { selected: f.name, type: jur.id, id: f.id };
+                    const chosen = this.ex.chosen();
+                    return chosen.length > 1 ? { selected: chosen.map(x => x.name), type: jur.id, ids: chosen.map(x => x.id) } : { selected: f.name, type: jur.id, id: f.id };
                 },
             },
             {

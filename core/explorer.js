@@ -621,11 +621,14 @@ class Explorer {
         this.pick(f);
     }
 
-    /** Several areas at once (a link to an area type with "multiple"): one profile, not one per area. */
+    /**
+     * The areas a link names (an area type with "multiple"): they replace the
+     * chosen ones, so a link to one area chooses that area alone.
+     */
     pickMany(ids) {
         const s = this.state;
         if (!s.jur) return;
-        if (!s.jur.multiple || ids.length <= 1) { if (ids.length) this.pickById(ids[0]); return; }
+        if (!s.jur.multiple) { if (ids.length) this.pickById(ids[0]); return; }
         s.picked = [];
         for (const id of ids) { const f = this.featureById(id); if (!s.picked.some(x => sameId(x.id, f.id))) s.picked.push(f); }
         this.applyPicked();

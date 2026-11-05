@@ -54,9 +54,9 @@ test('a multiple param token is a quoted SQL list', () => {
     assert.throws(() => paramTokens(app, { ptype: ['Bogus'] }), /Invalid value/);
 });
 
-test('paramKey joins a list with +; single values are unchanged', () => {
+test('paramKey joins a list with ~; single values are unchanged', () => {
     const k = paramKey(app, resolveParams(app, { ptype: ['Acquisition', 'Planning/Design'] }));
-    assert.equal(k, 'applicant-501_c_3__ptype-Acquisition+Planning_Design_width-10');
+    assert.equal(k, 'applicant-501_c_3__ptype-Acquisition~Planning_Design_width-10');
     assert.equal(paramKey({ params: [width] }, { width: 20 }), 'width-20');
 });
 
@@ -112,4 +112,31 @@ test('IDS is bound for a single named area too', () => {
     const a = jurisdictionAoi(county, { id: '06001', name: 'Alameda' }, app, resolveParams(app));
     assert.equal(e.tokensFor(a).IDS, "'06001'");
     assert.equal(e.tokensFor(a).ID, '06001');
+});
+
+test('the same areas in another order share a cache key; the label keeps the order', () => {
+    const params = resolveParams(app);
+    const ab = jurisdictionAoi(county, [{ id: '06013', name: 'Contra Costa' }, { id: '06001', name: 'Alameda' }], app, params);
+    const ba = jurisdictionAoi(county, [{ id: '06001', name: 'Alameda' }, { id: '06013', name: 'Contra Costa' }], app, params);
+    assert.equal(ab.key, ba.key);
+    assert.equal(ab.label, 'Contra Costa and Alameda');
+});
+
+test('an area template ending in a -- comment still unions', () => {
+    const commented = { id: 'county', aoi: "SELECT DISTINCT h0, h8 FROM t WHERE GEOID = '{{ID}}' -- one county" };
+    const a = jurisdictionAoi(commented, [{ id: '06001', name: 'A' }, { id: '06013', name: 'B' }], app, resolveParams(app));
+    assert.ok(a.sql.split('\n').some(l => l.trim() === ')'));
+    assert.ok(!/--[^\n]*\)/.test(a.sql));
+});
+
+test('a panel that needs {{ID}} says it shows one area when several are chosen', () => {
+    const theme = { id: 'th', queries: { q: { file: 'q.sql' } }, sql: { q: "SELECT * FROM x WHERE id = '{{ID}}'" } };
+    const e = new Engine({ app, themes: [theme] }, { client: { query: async () => [] }, dataBase: null });
+    const many = jurisdictionAoi(county, [{ id: '06001', name: 'A' }, { id: '06013', name: 'B' }], app, resolveParams(app));
+    assert.throws(() => e.sqlFor(theme, 'q', many), /one area at a time/);
+    const one = jurisdictionAoi(county, [{ id: '06001', name: 'A' }], app, resolveParams(app));
+    assert.match(e.sqlFor(theme, 'q', one), /id = '06001'/);
+    // {{ID}} only in a comment does not count
+    const commented = { ...theme, sql: { q: 'SELECT 1 -- per {{ID}}' } };
+    assert.equal(e.sqlFor(commented, 'q', many), 'SELECT 1 -- per {{ID}}');
 });
