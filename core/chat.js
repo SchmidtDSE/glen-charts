@@ -28,7 +28,7 @@
 
 import { renderBarChart } from './charts.js';
 import { fmt, escapeHtml } from './format.js';
-import { optionValue, optionLabel, paramActive } from './engine.js';
+import { optionValue, optionLabel, paramActive, paramValueLabel, paramValues, multiValue } from './engine.js';
 
 const HARNESS = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0';
 const MAX_ROWS = 100;          // rows of a query result passed back to the model
@@ -120,13 +120,14 @@ class Chat {
         const panels = themes.map(t => `### Panel "${t.label}" (theme ${t.id})\n${t.blurb || ''}\n` +
             Object.keys(t.queries).map(q => `Query ${q}:\n\`\`\`sql\n${t.sql[q].trim()}\n\`\`\``).join('\n')).join('\n\n');
         const types = app.jurisdictions.map(j => `${j.id} (${j.label})`).join(', ');
-        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}${p.when ? ` (only when ${Object.entries(p.when).map(([k, v]) => `${k} is ${[].concat(v).join(' or ')}`).join(' and ')})` : ''}`).join('\n');
+        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}${p.multiple ? ', several values at once: the token is a quoted SQL list for IN (...)' : ''}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}${p.multiple && p.any !== undefined ? ` (${p.any} means all)` : ''}${p.when ? ` (only when ${Object.entries(p.when).map(([k, v]) => `${k} is ${[].concat(v).join(' or ')}`).join(' and ')})` : ''}`).join('\n');
         return `You are the assistant in "${app.title || document.title}", a map and report of fixed panels about an area the reader chooses. You answer questions with data, by running SQL on DuckDB (with the spatial, h3 and httpfs extensions) through the query tool. Never invent numbers: every number you state comes from a query result or from current_view.
 
 Area tokens. SQL you pass to query or add_card may use these tokens, which are expanded for the area the reader has chosen:
 - {{AOI}}: a SELECT returning DISTINCT (h0, h8), the area's H3 cells at resolution 8.
 - {{AOI10}}: a SELECT returning DISTINCT (h0, h8, h10), its cells at resolution 10. Prefer it for people and boundary-sensitive measures.
-- {{ID}} and {{KIND}}: the area's id and type, for named areas only (not for drawn areas).
+- {{ID}} and {{KIND}}: the area's id and type, for named areas only (not for drawn areas). {{ID}} is unbound when several areas are chosen together.
+- {{IDS}}: the chosen named area's ids, or several areas' ids, as a quoted SQL list for IN (...).
 - Settings: ${params ? '\n' + params : 'none.'}
 Join on h0 as well as the cell id, as the panel SQL below does: h0 is the partition key. Start with WITH aoi AS MATERIALIZED ({{AOI10}}).
 
@@ -136,7 +137,7 @@ Tools:
 - current_view: the chosen area, settings and every panel's current results. Call it first when the question is about what the reader sees.
 - query: run SQL and read the rows. Keep results small: aggregate, and LIMIT lists.
 - add_card: show a result to the reader as a table or a bar chart. Use it whenever a table or chart helps; the reader can add the card to the report, where it re-runs for every area they pick, so write its SQL with the area tokens rather than with a fixed id where the question is about the chosen area, and do not name the area in its title or note. Select only the columns the reader needs, with readable names.
-- select_area, set_param: change the area or a setting when the reader asks to.
+- select_area, set_param: change the area or a setting when the reader asks to. A setting that takes several values takes them comma-separated; an area type that takes several areas adds one with add: true.
 
 Style: answer in a few plain sentences, with units, and say what the numbers cover. If a question cannot be answered from the data, say so.
 
@@ -152,8 +153,8 @@ ${this.stateText()}`;
     stateText() {
         const s = this.ex.state;
         const a = s.aoi;
-        const area = a ? `Area: ${a.label} (type ${a.kind}${a.id != null && a.kind !== 'polygon' ? `, id ${a.id}` : ''}).` : 'No area is chosen yet; area tokens are unbound until the reader picks one or you call select_area.';
-        const ps = this.app.params.filter(p => paramActive(p, this.app, s.params)).map(p => `${p.label || p.id}: ${optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
+        const area = a ? `Area: ${a.label} (type ${a.kind}${a.id != null && a.kind !== 'polygon' ? `, id ${a.id}` : a.ids?.length > 1 ? `, ids ${a.ids.join(', ')}` : ''}).` : 'No area is chosen yet; area tokens are unbound until the reader picks one or you call select_area.';
+        const ps = this.app.params.filter(p => paramActive(p, this.app, s.params)).map(p => `${p.label || p.id}: ${p.multiple ? paramValueLabel(p, s.params[p.id]) : optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
         return `${area}${ps ? `\nSettings: ${ps}.` : ''}`;
     }
 
@@ -204,9 +205,9 @@ ${this.stateText()}`;
             },
             {
                 name: 'select_area',
-                description: `Choose a named area, by area type and name. Area types: ${this.app.jurisdictions.map(j => j.id).join(', ')}.`,
-                inputSchema: { type: 'object', properties: { type: { type: 'string' }, name: { type: 'string' } }, required: ['type', 'name'] },
-                execute: async ({ type, name }) => {
+                description: `Choose a named area, by area type and name. Area types: ${this.app.jurisdictions.map(j => j.id).join(', ')}.${this.app.jurisdictions.some(j => j.multiple) ? ` With add: true, ${this.app.jurisdictions.filter(j => j.multiple).map(j => j.id).join(', ')} keep the areas already chosen and add this one.` : ''}`,
+                inputSchema: { type: 'object', properties: { type: { type: 'string' }, name: { type: 'string' }, ...(this.app.jurisdictions.some(j => j.multiple) ? { add: { type: 'boolean' } } : {}) }, required: ['type', 'name'] },
+                execute: async ({ type, name, add = false }) => {
                     const jur = this.app.jurisdictions.find(j => j.id === type || j.label.toLowerCase() === String(type).toLowerCase());
                     if (!jur) throw new Error(`Unknown area type ${type}.`);
                     const all = await this.ex.engine.listFeatures(jur, this.ex.state.params);
@@ -215,17 +216,26 @@ ${this.stateText()}`;
                     if (!f) throw new Error(`No ${jur.singular || jur.label} named ${name}.`);
                     if (this.ex.state.view !== 'profile') await this.ex.setView('profile');
                     if (this.ex.state.mode !== jur.id) await this.ex.setMode(jur.id);
-                    this.ex.pick(f);
-                    return { selected: f.name, type: jur.id, id: f.id };
+                    this.ex.pick(f, { replace: !(add && jur.multiple) });
+                    const all_ = this.ex.chosen();
+                    return all_.length > 1 ? { selected: all_.map(x => x.name), type: jur.id, ids: all_.map(x => x.id) } : { selected: f.name, type: jur.id, id: f.id };
                 },
             },
             {
                 name: 'set_param',
-                description: `Change a setting. ${this.app.params.map(p => `${p.id}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
+                description: `Change a setting. ${this.app.params.map(p => `${p.id}${p.multiple ? ' (one or more, comma-separated)' : ''}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
                 inputSchema: { type: 'object', properties: { id: { type: 'string' }, value: { type: 'string' } }, required: ['id', 'value'] },
                 execute: async ({ id, value }) => {
                     const p = this.app.params.find(x => x.id === id);
                     if (!p) throw new Error(`Unknown setting ${id}.`);
+                    if (p.multiple) {
+                        const given = Array.isArray(value) ? value.map(String) : p.options.some(o => String(optionValue(o)) === String(value)) ? [String(value)] : String(value).split(',').map(x => x.trim()).filter(Boolean);
+                        const bad = given.filter(v => !p.options.some(o => String(optionValue(o)) === v));
+                        if (!given.length || bad.length) throw new Error(`${id} takes one or more of ${p.options.map(optionValue).join(', ')}${bad.length ? `; not ${bad.join(', ')}` : ''}.`);
+                        const v = multiValue(p, given);
+                        await this.ex.setParam(id, v);
+                        return { [id]: paramValues(p, v) };
+                    }
                     if (!p.options.some(o => String(optionValue(o)) === String(value))) throw new Error(`${id} must be one of ${p.options.map(optionValue).join(', ')}.`);
                     await this.ex.setParam(id, value);
                     return { [id]: value };
