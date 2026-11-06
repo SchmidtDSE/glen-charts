@@ -32,7 +32,11 @@
  *   the token is a SQL list, 'a', 'b' (bare numbers when every option is a
  *   number), for `x IN ({{TOKEN}})` or `[{{TOKEN}}]`. "any": <value> names an
  *   option that stands for all of them: it is exclusive, and an empty choice
- *   falls back to it.
+ *   falls back to it. An option's "group" draws it under a heading that
+ *   chooses the whole group (see toggleGroup).
+ *   With "control": "range" the value is two of the options, which are ordered
+ *   stops, [low, high], bound as {{TOKEN_MIN}} and {{TOKEN_MAX}} (or the two
+ *   names in "tokens"). See rangeValue.
  *
  * Theme ids in app.json may be paths (e.g. "../config/themes/equity") so a
  * site variant can reuse another variant's themes; the id is the last segment.
@@ -139,6 +143,10 @@ export function resolveParams(app, given = {}) {
     const out = {};
     for (const p of app.params || []) {
         const want = given[p.id];
+        if (p.control === 'range') {
+            out[p.id] = (want !== undefined && matchesWhen(p.when, app, out) && rangeValue(p, want)) || paramDefault(p);
+            continue;
+        }
         if (p.multiple) {
             out[p.id] = want !== undefined && matchesWhen(p.when, app, out) ? multiValue(p, want) : paramDefault(p);
             continue;
@@ -151,6 +159,10 @@ export function resolveParams(app, given = {}) {
 
 /** A param's default value: `default`, else its first option; a list for a "multiple" param. */
 export function paramDefault(p) {
+    if (p.control === 'range') {
+        const vals = p.options.map(optionValue);
+        return rangeValue(p, p.default) || [vals[0], vals[vals.length - 1]];
+    }
     const d = p.default ?? optionValue(p.options[0]);
     if (!p.multiple) return d;
     const v = multiValue(p, d, null);
@@ -193,6 +205,43 @@ export function toggleMulti(p, current, value) {
     return multiValue(p, next);
 }
 
+/**
+ * A "control": "range" param's value from [low, high] or "low,high" (as in the
+ * link): two of its options, low first, or null when either is not an option.
+ */
+export function rangeValue(p, want) {
+    if (want === undefined || want === null) return null;
+    const parts = Array.isArray(want) ? want : String(want).split(',');
+    if (parts.length !== 2) return null;
+    const vals = p.options.map(optionValue);
+    let [i, j] = parts.map(x => vals.findIndex(v => String(v) === String(x).trim()));
+    if (i < 0 || j < 0) return null;
+    if (i > j) [i, j] = [j, i];
+    return [vals[i], vals[j]];
+}
+
+/** The template tokens a param binds: its token, or a range param's two. */
+export function paramTokenNames(p) {
+    const t = p.token || p.id.toUpperCase();
+    return p.control === 'range' ? (p.tokens || [`${t}_MIN`, `${t}_MAX`]) : [t];
+}
+
+/**
+ * The value after the reader clicks a group heading of a "multiple" param (the
+ * options with that "group"): the whole group is added, or removed when all of
+ * it is already chosen. Like toggleMulti, it clears "any" and never leaves the
+ * choice empty.
+ */
+export function toggleGroup(p, current, group) {
+    const cur = [].concat(current ?? []).map(String);
+    const members = p.options.filter(o => o && typeof o === 'object' && o.group === group).map(o => String(optionValue(o)));
+    const all = members.length > 0 && members.every(v => cur.includes(v));
+    let next = all ? cur.filter(v => !members.includes(v)) : [...cur, ...members];
+    if (p.any !== undefined) next = next.filter(v => v !== String(p.any));
+    if (!next.length) return p.any !== undefined ? multiValue(p, [String(p.any)]) : multiValue(p, cur);
+    return multiValue(p, next);
+}
+
 /** A param's value as a list: the value of a "multiple" param, or [value]. */
 export const paramValues = (p, v) => (Array.isArray(v) ? v : [v]);
 
@@ -229,6 +278,14 @@ export const optionLabel = (p, o) => {
 
 /** The label of a param's current value: its option's label, or, for a "multiple" param, the labels joined. */
 export function paramValueLabel(p, value) {
+    if (p.control === 'range') {
+        const r = rangeValue(p, value);
+        if (!r) return String(value);
+        const vals = p.options.map(optionValue);
+        const label = v => optionLabel(p, p.options.find(o => String(optionValue(o)) === String(v)));
+        if (p.all_label && String(r[0]) === String(vals[0]) && String(r[1]) === String(vals[vals.length - 1])) return p.all_label;
+        return String(r[0]) === String(r[1]) ? label(r[0]) : `${label(r[0])} – ${label(r[1])}`;
+    }
     return paramValues(p, value).map(v => {
         const o = p.options.find(x => String(optionValue(x)) === String(v));
         return o === undefined ? String(v) : optionLabel(p, o);
@@ -253,6 +310,14 @@ export function paramTokens(app, params = {}) {
     const out = {};
     for (const p of app.params || []) {
         const v = params[p.id] ?? paramDefault(p);
+        if (p.control === 'range') {
+            const r = rangeValue(p, v);
+            if (!r) throw new Error(`Invalid value for ${p.id}: ${v}`);
+            const [lo, hi] = paramTokenNames(p);
+            out[lo] = String(r[0]);
+            out[hi] = String(r[1]);
+            continue;
+        }
         const vs = p.multiple ? paramValues(p, v) : [v];
         for (const x of vs) if (!p.options.some(o => String(optionValue(o)) === String(x))) throw new Error(`Invalid value for ${p.id}: ${x}`);
         if (p.multiple && !vs.length) throw new Error(`No value for ${p.id}`);
@@ -287,13 +352,17 @@ export function queryParamKey(app, q, params = {}) {
 /**
  * Every combination of param values: [{ width: 5 }, { width: 10 }, ...]. For a
  * "multiple" param, 'all' takes each option on its own ([v]), not every subset;
- * a comma-separated pick ("a,b") is one list.
+ * a comma-separated pick ("a,b") is one list. For a "range" param, 'all' takes
+ * every span (low <= high) and "a,b" one span.
  */
 export function paramCombos(app, pick = {}) {
     let combos = [{}];
     for (const p of app.params || []) {
         const want = pick[p.id];
-        const vals = p.multiple
+        const opts = p.options.map(optionValue);
+        const vals = p.control === 'range'
+            ? (want === 'all' ? opts.flatMap((a, i) => opts.slice(i).map(b => [a, b])) : [want !== undefined ? rangeValue(p, want) || paramDefault(p) : paramDefault(p)])
+            : p.multiple
             ? (want === 'all' ? p.options.map(o => [optionValue(o)]) : [want !== undefined ? multiValue(p, want) : paramDefault(p)])
             : want === 'all' ? p.options.map(optionValue)
             : want !== undefined ? [optionValue(p.options.find(o => String(optionValue(o)) === String(want)) ?? p.default ?? p.options[0])]

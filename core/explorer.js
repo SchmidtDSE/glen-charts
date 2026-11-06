@@ -42,13 +42,14 @@
  * base + offset, as a relative slider's stops do.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
+ * A param with "control": "range" is a slider with two handles over its ordered options.
  * A param with "multiple": true is drawn as toggle pills (any number may be on; "any" names an
  * exclusive option, see engine.js). An area type with "multiple": true takes several areas at
  * once: each pick adds one, shown as a removable tag, a map click toggles one, and the profile is
  * of their union.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, toggleMulti } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, toggleMulti, toggleGroup, rangeValue } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -308,10 +309,7 @@ class Explorer {
             <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
                 <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
                 <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
-            </div>` : p.multiple ? `
-            <div class="chips param-multi" role="group" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
-                ${p.options.map(o => `<button type="button" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
-            </div>` : `
+            </div>` : p.control === 'range' ? rangeControl(p) : p.multiple ? multiPills(p) : `
             <div class="seg" role="radiogroup" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
             </div>`}
@@ -321,9 +319,12 @@ class Explorer {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
         });
         step.querySelectorAll('.param-multi button').forEach(b => {
-            const p = app.params.find(x => x.id === b.parentElement.dataset.param);
-            b.onclick = () => this.setParam(p.id, toggleMulti(p, this.state.params[p.id], b.dataset.value));
+            const p = app.params.find(x => x.id === b.closest('[data-param]').dataset.param);
+            b.onclick = () => this.setParam(p.id, b.dataset.group !== undefined
+                ? toggleGroup(p, this.state.params[p.id], b.dataset.group)
+                : toggleMulti(p, this.state.params[p.id], b.dataset.value));
         });
+        step.querySelectorAll('.param-span').forEach(g => this.wireRange(g, app.params.find(x => x.id === g.dataset.param)));
         step.querySelectorAll('.param-slider').forEach(g => {
             const p = app.params.find(x => x.id === g.dataset.param);
             const input = g.querySelector('input');
@@ -397,8 +398,13 @@ class Explorer {
             const v = String(this.state.params[g.dataset.param]);
             if (g.classList.contains('param-multi')) {
                 const on = paramValues(null, this.state.params[g.dataset.param]).map(String);
-                g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(on.includes(b.dataset.value))));
-            } else if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
+                g.querySelectorAll('button[data-value]').forEach(b => b.setAttribute('aria-pressed', String(on.includes(b.dataset.value))));
+                // a group heading is on when its whole group is chosen
+                g.querySelectorAll('button[data-group]').forEach(h => {
+                    const ms = [...g.querySelectorAll(`button[data-in="${CSS.escape(h.dataset.group)}"]`)];
+                    h.setAttribute('aria-pressed', String(ms.length > 0 && ms.every(b => on.includes(b.dataset.value))));
+                });
+            } else if (g.classList.contains('param-span')) this.markRange(g, this.config.app.params.find(x => x.id === g.dataset.param), this.state.params[g.dataset.param], true); else if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
             else if (g.classList.contains('param-number')) this.markNumber(g, this.config.app.params.find(x => x.id === g.dataset.param));
             else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
         });
@@ -423,6 +429,44 @@ class Explorer {
             ? 'Choose an area to enter a value.'
             : `Enter a value from ${end(Math.min(...vals))} to ${end(Math.max(...vals))}.`;
         input.disabled = !!p.relative && !g.dataset.base;
+    }
+
+    /** Range params: two handles that cannot cross; a click on a stop moves the nearer handle. */
+    wireRange(g, p) {
+        const [lo, hi] = g.querySelectorAll('input[type="range"]');
+        const at = i => optionValue(p.options[Number(i)]);
+        const value = () => [at(lo.value), at(hi.value)];
+        // 'input' only moves the handle; the param changes on release
+        lo.oninput = () => { if (+lo.value > +hi.value) lo.value = hi.value; this.markRange(g, p, value()); };
+        hi.oninput = () => { if (+hi.value < +lo.value) hi.value = lo.value; this.markRange(g, p, value()); };
+        lo.onchange = hi.onchange = () => this.setParam(p.id, value());
+        g.querySelectorAll('.param-stops button').forEach(b => {
+            b.onclick = () => {
+                const i = +b.dataset.i, a = +lo.value, z = +hi.value;
+                if (i < a || (i <= z && i - a <= z - i && i !== z)) lo.value = i; else hi.value = i;
+                this.setParam(p.id, value());
+            };
+        });
+    }
+
+    markRange(g, p, v, setInput = false) {
+        const r = rangeValue(p, v);
+        if (!r) return;
+        const vals = p.options.map(o => String(optionValue(o)));
+        const [a, z] = r.map(x => vals.indexOf(String(x)));
+        if (setInput) {
+            const [lo, hi] = g.querySelectorAll('input[type="range"]');
+            lo.value = a; hi.value = z;
+        }
+        g.style.setProperty('--lo', a);
+        g.style.setProperty('--hi', z);
+        // both handles at the last stop: the "from" handle on top, so it can move left
+        g.classList.toggle('lo-top', a === z && z === vals.length - 1);
+        g.querySelectorAll('.param-stops button').forEach(b => {
+            const i = +b.dataset.i;
+            b.setAttribute('aria-pressed', String(i === a || i === z));
+            b.classList.toggle('in-range', i > a && i < z);
+        });
     }
 
     markSlider(g, v, setInput = false) {
@@ -870,7 +914,7 @@ class Explorer {
         const app = this.config.app;
         return app.params.filter(p => paramActive(p, app, this.state.params)).map(p => {
             const v = this.state.params[p.id];
-            if (p.multiple) return `${p.label || p.id}: ${paramValueLabel(p, v)}`;
+            if (p.multiple || p.control === 'range') return `${p.label || p.id}: ${paramValueLabel(p, v)}`;
             const o = p.options.find(x => String(optionValue(x)) === String(v));
             return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
         }).filter(Boolean).join(' · ');
@@ -1196,3 +1240,36 @@ function numberBase(g) {
     return g.dataset.base && Number.isFinite(b) ? b : 0;
 }
 
+/** A "multiple" param's pills: options with a "group" sit under a heading pill that chooses the group. */
+function multiPills(p) {
+    const pill = o => `<button type="button" data-value="${escapeHtml(optionValue(o))}"${o?.group ? ` data-in="${escapeHtml(o.group)}"` : ''} aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`;
+    const groups = [...new Set(p.options.map(o => o?.group).filter(Boolean))];
+    const loose = p.options.filter(o => !o?.group);
+    if (!groups.length) return `
+            <div class="chips param-multi" role="group" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
+                ${loose.map(pill).join('')}
+            </div>`;
+    return `
+            <div class="param-multi param-groups" role="group" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
+                ${loose.length ? `<div class="chips">${loose.map(pill).join('')}</div>` : ''}
+                ${groups.map(g => `
+                <div class="param-group">
+                    <button type="button" class="group-head" data-group="${escapeHtml(g)}" aria-pressed="false">${escapeHtml(g)}</button>
+                    <div class="chips">${p.options.filter(o => o?.group === g).map(pill).join('')}</div>
+                </div>`).join('')}
+            </div>`;
+}
+
+/** "control": "range": two range inputs on one track over the ordered stops. */
+function rangeControl(p) {
+    const n = p.options.length, label = escapeHtml(p.label || p.id);
+    return `
+            <div class="param-span" data-param="${escapeHtml(p.id)}" style="--n:${n};--last:${Math.max(1, n - 1)}">
+                <div class="pr-track">
+                    <div class="pr-fill"></div>
+                    <input type="range" min="0" max="${n - 1}" step="1" value="0" aria-label="${label}: from">
+                    <input type="range" min="0" max="${n - 1}" step="1" value="${n - 1}" aria-label="${label}: to">
+                </div>
+                <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
+            </div>`;
+}

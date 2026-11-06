@@ -58,7 +58,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `data_base` | folder holding `data/`, when a site variant shares another's |
 | `pages` | extra tabs that show an HTML file, e.g. an About page: `[{ "id": "about", "label": "About", "file": "config/about.html", "full": true, "sources": true }]`. `full` hides the map and gives the panel the whole width; `sources` appends the citations of every dataset the app queries, from `data/sources.json` (`precompute sources`). The tab is kept in the link (`?view=about`) |
 | `chat` | an optional assistant; see [Chat](#chat). Without this block no LLM code loads |
-| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them |
+| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them; `"popup_priority": true` shows its popup rather than the area's wherever one of its features is under the pointer, for features that lie inside areas such as project footprints (without it the area's popup wins); a click still selects the area underneath |
 
 An area type:
 
@@ -134,11 +134,28 @@ With `"multiple": true` the reader may choose several options at once. The param
 - The token is a SQL list: `'Acquisition', 'Restoration'`, with quotes doubled inside values, or bare numbers when every option is a number. Use it as `x IN ({{PTYPE}})` or `list_has_any(types, [{{PTYPE}}])`. Extension tokens get the list as `params.ptype`.
 - `any` names an option that stands for all of them. It is exclusive: choosing it clears the others, and choosing another clears it. Clearing the last other pill falls back to it. Without `any`, the last pill cannot be cleared. Test it in SQL as `'Any' IN ({{PTYPE}}) OR ...`.
 - `default` may be one value or a list.
+- An option's `group` (`{ "value": "wcb", "label": "WCB", "group": "State" }`) puts its pill under a heading for the group, and the heading chooses the whole group, or clears it when all of it is chosen. Options without a group come first. Other fields on an option are ignored, so extension tokens may read their own from `app.params`.
 - Option values may not contain a comma: the link and `set_param` separate values with commas A warning is logged when the config loads if one does.
 - The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `~` (`ptype-Acquisition~Restoration`; not `+`, which some servers, S3 among them, read as a space in a path). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
 - A `when` that names a multiple param matches only when every chosen value is one it names.
 - `precompute --param ptype=all` runs each option on its own, not every combination. `--param ptype=a,b` runs that one list. Other choices run live.
 - `multiple` uses pills only, not `control: "slider"` or `"number"`.
+
+With `"control": "range"` the value is two of the options, which are ordered stops, drawn as a slider with two handles. It binds `{{<TOKEN>_MIN}}` and `{{<TOKEN>_MAX}}`, or the two names in `"tokens"`:
+
+```json
+{ "id": "years", "label": "Years", "token": "YEAR", "control": "range", "options": [1990, 2000, 2010, 2015, 2020, 2025],
+  "default": [2000, 2025], "all_label": "All years" }
+```
+
+```sql
+WHERE year BETWEEN {{YEAR_MIN}} AND {{YEAR_MAX}}
+```
+
+- The default is the full span. The value is held to the declared stops, low first, so it is safe in SQL.
+- The link holds `?years=2000,2020`, and the file and cache key `years-2000~2020`. The settings line shows "Years: 2000 – 2020", or `all_label` for the full span. The assistant's `set_param` takes `2000,2020`.
+- Clicking a stop moves the nearer handle.
+- `precompute --param years=all` runs every span (low ≤ high); `--param years=2000,2020` runs one.
 
 ## Themes
 
@@ -233,7 +250,7 @@ What configuration cannot express, an app passes to `createExplorer({ extensions
 export default {
   tokens:   { LAND: (aoi, app, params) => '...SQL...' },        // extra template tokens
   charts:   { representation: { load(ctx), render(el, chart, data, ctx), css } },
-  overlays: [{ id, url, source_layer, type, paint, popup: props => html, legend: html, toggle: 'Show …' }],
+  overlays: [{ id, url, source_layer, type, paint, popup: props => html, popup_priority, legend: html, toggle: 'Show …' }],
   sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
@@ -306,7 +323,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.7.1 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.13.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

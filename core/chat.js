@@ -28,7 +28,7 @@
 
 import { renderBarChart } from './charts.js';
 import { fmt, escapeHtml } from './format.js';
-import { optionValue, optionLabel, paramActive, paramValueLabel, paramValues, multiValue } from './engine.js';
+import { optionValue, optionLabel, paramActive, paramValueLabel, paramValues, multiValue, rangeValue, paramTokenNames } from './engine.js';
 
 const HARNESS = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0';
 const MAX_ROWS = 100;          // rows of a query result passed back to the model
@@ -120,7 +120,7 @@ class Chat {
         const panels = themes.map(t => `### Panel "${t.label}" (theme ${t.id})\n${t.blurb || ''}\n` +
             Object.keys(t.queries).map(q => `Query ${q}:\n\`\`\`sql\n${t.sql[q].trim()}\n\`\`\``).join('\n')).join('\n\n');
         const types = app.jurisdictions.map(j => `${j.id} (${j.label})`).join(', ');
-        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}${p.multiple ? ', several values at once: the token is a quoted SQL list for IN (...)' : ''}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}${p.multiple && p.any !== undefined ? ` (${p.any} means all)` : ''}${p.when ? ` (only when ${Object.entries(p.when).map(([k, v]) => `${k} is ${[].concat(v).join(' or ')}`).join(' and ')})` : ''}`).join('\n');
+        const params = app.params.map(p => `${p.id} (${p.control === 'range' ? `tokens {{${paramTokenNames(p)[0]}}} and {{${paramTokenNames(p)[1]}}}, the low and high ends of the chosen range` : `token {{${p.token || p.id.toUpperCase()}}}`}${p.multiple ? ', several values at once: the token is a quoted SQL list for IN (...)' : ''}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}${p.multiple && p.any !== undefined ? ` (${p.any} means all)` : ''}${p.when ? ` (only when ${Object.entries(p.when).map(([k, v]) => `${k} is ${[].concat(v).join(' or ')}`).join(' and ')})` : ''}`).join('\n');
         return `You are the assistant in "${app.title || document.title}", a map and report of fixed panels about an area the reader chooses. You answer questions with data, by running SQL on DuckDB (with the spatial, h3 and httpfs extensions) through the query tool. Never invent numbers: every number you state comes from a query result or from current_view.
 
 Area tokens. SQL you pass to query or add_card may use these tokens, which are expanded for the area the reader has chosen:
@@ -154,7 +154,7 @@ ${this.stateText()}`;
         const s = this.ex.state;
         const a = s.aoi;
         const area = a ? `Area: ${a.label} (type ${a.kind}${a.id != null && a.kind !== 'polygon' ? `, id ${a.id}` : a.ids?.length > 1 ? `, ids ${a.ids.join(', ')}` : ''}).` : 'No area is chosen yet; area tokens are unbound until the reader picks one or you call select_area.';
-        const ps = this.app.params.filter(p => paramActive(p, this.app, s.params)).map(p => `${p.label || p.id}: ${p.multiple ? paramValueLabel(p, s.params[p.id]) : optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
+        const ps = this.app.params.filter(p => paramActive(p, this.app, s.params)).map(p => `${p.label || p.id}: ${p.multiple || p.control === 'range' ? paramValueLabel(p, s.params[p.id]) : optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
         return `${area}${ps ? `\nSettings: ${ps}.` : ''}`;
     }
 
@@ -223,11 +223,17 @@ ${this.stateText()}`;
             },
             {
                 name: 'set_param',
-                description: `Change a setting. ${this.app.params.map(p => `${p.id}${p.multiple ? ' (one or more, comma-separated)' : ''}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
+                description: `Change a setting. ${this.app.params.map(p => `${p.id}${p.multiple ? ' (one or more, comma-separated)' : p.control === 'range' ? ' (low,high)' : ''}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
                 inputSchema: { type: 'object', properties: { id: { type: 'string' }, value: { type: 'string' } }, required: ['id', 'value'] },
                 execute: async ({ id, value }) => {
                     const p = this.app.params.find(x => x.id === id);
                     if (!p) throw new Error(`Unknown setting ${id}.`);
+                    if (p.control === 'range') {
+                        const v = rangeValue(p, value);
+                        if (!v) throw new Error(`${id} takes two of ${p.options.map(optionValue).join(', ')}, as low,high.`);
+                        await this.ex.setParam(id, v);
+                        return { [id]: v };
+                    }
                     if (p.multiple) {
                         const given = Array.isArray(value) ? value.map(String) : p.options.some(o => String(optionValue(o)) === String(value)) ? [String(value)] : String(value).split(',').map(x => x.trim()).filter(Boolean);
                         const bad = given.filter(v => !p.options.some(o => String(optionValue(o)) === v));

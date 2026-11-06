@@ -135,6 +135,37 @@ button, input { font: inherit; color: inherit; }
 /* a param with "multiple": true: toggle pills, every chosen one highlighted */
 .chips.param-multi { --c: var(--primary); gap: 4px; }
 .chips.param-multi button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 400; }
+/* a "multiple" param with groups: a heading pill per group that chooses it whole */
+.param-groups { display: flex; flex-direction: column; gap: 6px; --c: var(--primary); }
+.param-groups .chips { gap: 4px; }
+.param-groups .chips button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 400; }
+.param-group { display: flex; flex-direction: column; gap: 4px; }
+.param-group .group-head { align-self: flex-start; background: none; border: 0; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+.param-group .group-head::before { content: '☐ '; }
+.param-group .group-head[aria-pressed="true"]::before { content: '☑ '; }
+.param-group .group-head:hover { color: var(--text); }
+/* "control": "range" params: two handles on one track over the stops */
+.param-span { padding: 0 4px; }
+.pr-track { position: relative; height: 18px; width: calc(100% - 100% / var(--n)); margin: 4px calc(50% / var(--n)) 0; }
+.pr-track::before, .pr-fill { content: ''; position: absolute; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
+.pr-track::before { left: 0; right: 0; background: var(--line-strong); }
+.pr-fill { background: var(--primary); left: calc(var(--lo, 0) / var(--last) * 100%); width: calc((var(--hi, 0) - var(--lo, 0)) / var(--last) * 100%); }
+.pr-track input[type="range"] { position: absolute; inset: 0; width: 100%; height: 18px; margin: 0; background: none; -webkit-appearance: none; appearance: none; pointer-events: none; }
+.pr-track input[type="range"]::-webkit-slider-runnable-track { background: none; }
+.pr-track input[type="range"]::-moz-range-track { background: none; }
+.pr-track input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; pointer-events: auto; cursor: pointer;
+    width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card-bg); box-shadow: 0 0 0 1px var(--primary);
+}
+.pr-track input[type="range"]::-moz-range-thumb {
+    pointer-events: auto; cursor: pointer;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card-bg); box-shadow: 0 0 0 1px var(--primary);
+}
+.pr-track input[type="range"]:focus-visible { outline: none; }
+.pr-track input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+.pr-track input[type="range"]:focus-visible::-moz-range-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+.param-span.lo-top .pr-track input[type="range"]:first-of-type { z-index: 1; }
+.param-span .param-stops button.in-range { color: var(--text-2); }
 
 /* the chosen areas of an area type with "multiple": true */
 .area-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
