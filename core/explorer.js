@@ -37,11 +37,14 @@
  * that depends on the area (e.g. a species' measured threshold): once an area is chosen, the query
  * is run and each stop is labelled base + offset; note ("Default: the team's value, {}") shows the
  * base, and offset_format ("{} °C from the team's value") labels the offset elsewhere.
+ * A param with "control": "multi" is a list of checkboxes (options may carry a "group",
+ * drawn as a heading that ticks the whole group) inside a summary that shows the choice;
+ * "control": "range" is a slider with two handles over the ordered options.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, paramKey, paramTokens } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, optionValue, optionLabel, paramKey, paramTokens, paramText, paramLabel, paramDefault, normalizeParam } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -290,7 +293,7 @@ class Explorer {
         // (ordered options such as a resolution); the default is buttons.
         step.innerHTML = app.params.map(p => `
             <div class="step-label">${escapeHtml(p.label || p.id)}</div>
-            ${p.control === 'slider' ? `
+            ${p.control === 'multi' ? multiControl(p) : p.control === 'range' ? rangeControl(p) : p.control === 'slider' ? `
             <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
                 <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
                 <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
@@ -314,8 +317,86 @@ class Explorer {
                 b.onclick = () => this.setParam(p.id, b.dataset.value);
             });
         });
+        step.querySelectorAll('.param-multi').forEach(g => this.wireMulti(g, app.params.find(x => x.id === g.dataset.param)));
+        step.querySelectorAll('.param-range').forEach(g => this.wireRange(g, app.params.find(x => x.id === g.dataset.param)));
         this.markParams();
         this.relabelRelative();
+    }
+
+    /**
+     * Multi params: ticking boxes changes the param after a short pause, so a
+     * reader can tick several before the report reloads. The last ticked box
+     * cannot be cleared; "All" and group boxes tick or clear their options.
+     */
+    wireMulti(g, p) {
+        const boxes = [...g.querySelectorAll('input[data-value]')];
+        const commit = () => {
+            clearTimeout(g._timer);
+            const v = boxes.filter(b => b.checked).map(b => b.dataset.value);
+            this.markMulti(g, p, v);
+            g._timer = setTimeout(() => this.setParam(p.id, v), 600);
+        };
+        boxes.forEach(b => b.onchange = () => {
+            if (!boxes.some(x => x.checked)) b.checked = true;
+            commit();
+        });
+        g.querySelectorAll('input[data-group], input[data-all]').forEach(h => h.onchange = () => {
+            const set = h.dataset.all !== undefined ? boxes : boxes.filter(b => b.dataset.in === h.dataset.group);
+            set.forEach(b => { b.checked = h.checked; });
+            if (!boxes.some(x => x.checked)) set.forEach(b => { b.checked = true; });
+            commit();
+        });
+    }
+
+    markMulti(g, p, v) {
+        const on = new Set((normalizeParam(p, v) ?? []).map(String));
+        const boxes = [...g.querySelectorAll('input[data-value]')];
+        boxes.forEach(b => { b.checked = on.has(b.dataset.value); });
+        const tri = (h, set) => {
+            const n = set.filter(b => b.checked).length;
+            h.checked = n === set.length;
+            h.indeterminate = n > 0 && n < set.length;
+        };
+        g.querySelectorAll('input[data-group]').forEach(h => tri(h, boxes.filter(b => b.dataset.in === h.dataset.group)));
+        const all = g.querySelector('input[data-all]');
+        if (all) tri(all, boxes);
+        g.querySelector('.param-multi-value').textContent = paramLabel(p, [...on]);
+    }
+
+    /** Range params: two handles that cannot cross; a click on a stop moves the nearer handle. */
+    wireRange(g, p) {
+        const [lo, hi] = g.querySelectorAll('input[type="range"]');
+        const at = i => optionValue(p.options[Number(i)]);
+        const value = () => [at(lo.value), at(hi.value)];
+        lo.oninput = () => { if (+lo.value > +hi.value) lo.value = hi.value; this.markRange(g, p, value()); };
+        hi.oninput = () => { if (+hi.value < +lo.value) hi.value = lo.value; this.markRange(g, p, value()); };
+        lo.onchange = hi.onchange = () => this.setParam(p.id, value());
+        g.querySelectorAll('.param-stops button').forEach(b => {
+            b.onclick = () => {
+                const i = +b.dataset.i, a = +lo.value, z = +hi.value;
+                if (i < a || (i <= z && i - a <= z - i && i !== z)) lo.value = i; else hi.value = i;
+                this.setParam(p.id, value());
+            };
+        });
+    }
+
+    markRange(g, p, v, setInput = false) {
+        const n = normalizeParam(p, v);
+        if (!n) return;
+        const vals = p.options.map(o => String(optionValue(o)));
+        const [a, z] = n.map(x => vals.indexOf(String(x)));
+        if (setInput) {
+            const [lo, hi] = g.querySelectorAll('input[type="range"]');
+            lo.value = a; hi.value = z;
+        }
+        g.style.setProperty('--lo', a);
+        g.style.setProperty('--hi', z);
+        g.classList.toggle('lo-top', a === z && z === vals.length - 1);
+        g.querySelectorAll('.param-stops button').forEach(b => {
+            const i = +b.dataset.i;
+            b.setAttribute('aria-pressed', String(i === a || i === z));
+            b.classList.toggle('in-range', i > a && i < z);
+        });
     }
 
     /**
@@ -353,8 +434,11 @@ class Explorer {
 
     markParams() {
         this.$('#step-params').querySelectorAll('[data-param]').forEach(g => {
+            const p = this.config.app.params.find(x => x.id === g.dataset.param);
             const v = String(this.state.params[g.dataset.param]);
-            if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
+            if (g.classList.contains('param-multi')) this.markMulti(g, p, this.state.params[p.id]);
+            else if (g.classList.contains('param-range')) this.markRange(g, p, this.state.params[p.id], true);
+            else if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
             else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
         });
     }
@@ -706,10 +790,7 @@ class Explorer {
 
     paramNote() {
         const app = this.config.app;
-        return app.params.map(p => {
-            const o = p.options.find(x => String(optionValue(x)) === String(this.state.params[p.id]));
-            return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
-        }).filter(Boolean).join(' · ');
+        return app.params.map(p => `${p.label || p.id}: ${paramLabel(p, this.state.params[p.id])}`).join(' · ');
     }
 
     colorByScore(res) {
@@ -748,10 +829,7 @@ class Explorer {
         const app = this.config.app;
         const r = this.$('#report');
         const isRegion = aoi.kind === 'state';
-        const paramNote = app.params.map(p => {
-            const o = p.options.find(x => String(optionValue(x)) === String(s.params[p.id]));
-            return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
-        }).filter(Boolean).join(' · ');
+        const paramNote = this.paramNote();
         r.innerHTML = `
             <div class="report-head">
                 <div>
@@ -906,7 +984,10 @@ class Explorer {
         for (const [k, v] of Object.entries(sh?.query || {})) q.set(k, v);
         if (s.themes.size !== this.config.themes.length) q.set('themes', this.orderedThemes().map(t => t.id).join(','));
         if (s.mapTheme && this.config.themes.some(t => t.map)) q.set('map', s.mapTheme);
-        for (const p of app.params) if (String(s.params[p.id]) !== String(p.default ?? optionValue(p.options[0]))) q.set(p.id, s.params[p.id]);
+        for (const p of app.params) {
+            const v = paramText(p, s.params[p.id]);
+            if (v !== paramText(p, paramDefault(p))) q.set(p.id, v);
+        }
         if (s.view !== 'profile') q.set('view', s.view);
         const lbs = this.lb?.stateString();
         if (lbs) q.set('score', lbs);
@@ -1006,3 +1087,40 @@ function sourcesHtml(sources) {
 }
 
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });
+
+/**
+ * "control": "multi": a summary showing the choice that opens to checkboxes, an
+ * "All" box, and options with a "group" under a heading box that ticks the group.
+ */
+function multiControl(p) {
+    const box = o => `<label class="pm-opt"><input type="checkbox" data-value="${escapeHtml(optionValue(o))}"${o?.group ? ` data-in="${escapeHtml(o.group)}"` : ''}> ${escapeHtml(optionLabel(p, o))}</label>`;
+    const groups = [...new Set(p.options.map(o => o?.group).filter(Boolean))];
+    const loose = p.options.filter(o => !o?.group);
+    return `
+            <details class="param-multi" data-param="${escapeHtml(p.id)}">
+                <summary><span class="param-multi-value"></span></summary>
+                <div class="pm-body" role="group" aria-label="${escapeHtml(p.label || p.id)}">
+                    <label class="pm-all"><input type="checkbox" data-all> ${escapeHtml(p.all_label || 'All')}</label>
+                    ${loose.length ? `<div class="pm-opts">${loose.map(box).join('')}</div>` : ''}
+                    ${groups.map(g => `
+                    <fieldset class="pm-group">
+                        <legend><label><input type="checkbox" data-group="${escapeHtml(g)}"> ${escapeHtml(g)}</label></legend>
+                        <div class="pm-opts">${p.options.filter(o => o?.group === g).map(box).join('')}</div>
+                    </fieldset>`).join('')}
+                </div>
+            </details>`;
+}
+
+/** "control": "range": two range inputs on one track over the ordered stops. */
+function rangeControl(p) {
+    const n = p.options.length, label = escapeHtml(p.label || p.id);
+    return `
+            <div class="param-range" data-param="${escapeHtml(p.id)}" style="--n:${n};--last:${n - 1}">
+                <div class="pr-track">
+                    <div class="pr-fill"></div>
+                    <input type="range" min="0" max="${n - 1}" step="1" value="0" aria-label="${label}: from">
+                    <input type="range" min="0" max="${n - 1}" step="1" value="${n - 1}" aria-label="${label}: to">
+                </div>
+                <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
+            </div>`;
+}

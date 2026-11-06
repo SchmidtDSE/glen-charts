@@ -25,6 +25,9 @@
  *                "options": [5, 10, 20, 50], "default": 10, "format": "{} km" }]
  *   A param's value is always one of its options, so it is safe to splice into
  *   SQL. It is part of every cache key and of precomputed file paths.
+ *   "control": "multi" holds any set of the options ({{T}} is a SQL list,
+ *   {{T_ALL}} true when all are chosen); "control": "range" holds two of the
+ *   ordered options ({{T_MIN}}, {{T_MAX}}). See normalizeParam.
  *
  * Theme ids in app.json may be paths (e.g. "../config/themes/equity") so a
  * site variant can reuse another variant's themes; the id is the last segment.
@@ -111,15 +114,88 @@ function commentStart(line) {
 
 /* ------------------------------------------------------------------ params */
 
+/**
+ * A param's value, made valid, or null when it is not one the param allows.
+ *   one (the default control): one of the options.
+ *   "control": "multi": the chosen options, in option order, at least one. Given
+ *     as an array, a comma-separated string ("wcb,state"), or "all".
+ *   "control": "range": [low, high], two of the options (the ordered stops),
+ *     low <= high. Given as an array or "low,high".
+ * The result holds the options' own values, so it is safe to splice into SQL.
+ */
+export function normalizeParam(p, v) {
+    const vals = p.options.map(optionValue);
+    if (v === undefined || v === null) return null;
+    if (p.control === 'multi') {
+        if (v === 'all') return vals.slice();
+        const want = new Set((Array.isArray(v) ? v : String(v).split(',')).map(x => String(x).trim()));
+        const out = vals.filter(o => want.has(String(o)));
+        return out.length ? out : null;
+    }
+    if (p.control === 'range') {
+        const parts = Array.isArray(v) ? v : String(v).split(',');
+        if (parts.length !== 2) return null;
+        let [i, j] = parts.map(x => vals.findIndex(o => String(o) === String(x).trim()));
+        if (i < 0 || j < 0) return null;
+        if (i > j) [i, j] = [j, i];
+        return [vals[i], vals[j]];
+    }
+    const hit = vals.findIndex(o => String(o) === String(v));
+    return hit < 0 ? null : vals[hit];
+}
+
+/** A param's default value: its "default" (for multi, "all" or a list), else the first option, every option (multi) or the full span (range). */
+export function paramDefault(p) {
+    const vals = p.options.map(optionValue);
+    if (p.control === 'multi') return normalizeParam(p, p.default ?? 'all') ?? vals.slice();
+    if (p.control === 'range') return normalizeParam(p, p.default ?? [vals[0], vals[vals.length - 1]]) ?? [vals[0], vals[vals.length - 1]];
+    return p.default ?? vals[0];
+}
+
 /** Current param values: the given ones where valid, else each param's default. */
 export function resolveParams(app, given = {}) {
     const out = {};
-    for (const p of app.params || []) {
-        const want = given[p.id];
-        const hit = want !== undefined && p.options.find(o => String(optionValue(o)) === String(want));
-        out[p.id] = hit !== undefined && hit !== false ? optionValue(hit) : (p.default ?? optionValue(p.options[0]));
-    }
+    for (const p of app.params || []) out[p.id] = normalizeParam(p, given[p.id]) ?? paramDefault(p);
     return out;
+}
+
+/**
+ * A param value as text, for the link, cache keys and comparisons: the value
+ * itself, "a,b" for a multi param ("all" when every option is chosen) and
+ * "low,high" for a range.
+ */
+export function paramText(p, v) {
+    if (p.control === 'multi') {
+        const n = normalizeParam(p, v);
+        return n && n.length === p.options.length ? 'all' : (n ?? []).join(',');
+    }
+    if (p.control === 'range') return (normalizeParam(p, v) ?? []).join(',');
+    return String(v);
+}
+
+/** A param value as the reader sees it, for the settings line: "Funder: WCB, Federal", "Years: 2000 – 2020". */
+export function paramLabel(p, v) {
+    const label = x => optionLabel(p, p.options.find(o => String(optionValue(o)) === String(x)) ?? x);
+    const n = normalizeParam(p, v);
+    if (n === null) return String(v);
+    if (p.control === 'multi') return n.length === p.options.length ? (p.all_label || 'All') : n.map(label).join(', ');
+    if (p.control === 'range') {
+        const vals = p.options.map(optionValue);
+        if (p.all_label && String(n[0]) === String(vals[0]) && String(n[1]) === String(vals[vals.length - 1])) return p.all_label;
+        return String(n[0]) === String(n[1]) ? label(n[0]) : `${label(n[0])} – ${label(n[1])}`;
+    }
+    return label(n);
+}
+
+/** A SQL literal for an option value: numbers as written, strings single-quoted. */
+const sqlLiteral = v => (typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+
+/** The template tokens a param binds: its token, or for a range its two tokens. */
+export function paramTokenNames(p) {
+    const t = p.token || p.id.toUpperCase();
+    if (p.control === 'multi') return [t, `${t}_ALL`];
+    if (p.control === 'range') return p.tokens || [`${t}_MIN`, `${t}_MAX`];
+    return [t];
 }
 
 /** An option is a bare value or { value, label }. */
@@ -133,13 +209,25 @@ export const optionLabel = (p, o) => {
     return f ? f.replace('{}', text) : text;
 };
 
-/** { WIDTH: '10', ... } for template expansion. */
+/**
+ * { WIDTH: '10', ... } for template expansion. A multi param binds {{T}} as a
+ * SQL list literal (['wcb', 'state']) and {{T_ALL}} as true or false; a range
+ * param binds {{T_MIN}} and {{T_MAX}} (or the names in its "tokens").
+ */
 export function paramTokens(app, params = {}) {
     const out = {};
     for (const p of app.params || []) {
-        const v = params[p.id] ?? p.default;
-        if (!p.options.some(o => String(optionValue(o)) === String(v))) throw new Error(`Invalid value for ${p.id}: ${v}`);
-        out[p.token || p.id.toUpperCase()] = String(v);
+        const given = params[p.id] ?? paramDefault(p);
+        const v = normalizeParam(p, given);
+        if (v === null) throw new Error(`Invalid value for ${p.id}: ${given}`);
+        const names = paramTokenNames(p);
+        if (p.control === 'multi') {
+            out[names[0]] = `[${v.map(sqlLiteral).join(', ')}]`;
+            out[names[1]] = String(v.length === p.options.length);
+        } else if (p.control === 'range') {
+            out[names[0]] = String(v[0]);
+            out[names[1]] = String(v[1]);
+        } else out[names[0]] = String(v);
     }
     return out;
 }
@@ -147,7 +235,7 @@ export function paramTokens(app, params = {}) {
 /** "width-10" (sorted by id), or '' when the app has no params. File and cache key part. */
 export function paramKey(app, params = {}) {
     return (app.params || []).slice().sort((a, b) => a.id.localeCompare(b.id))
-        .map(p => `${p.id}-${String(params[p.id] ?? p.default).replace(/[^A-Za-z0-9.]+/g, '_')}`).join('_');
+        .map(p => `${p.id}-${paramText(p, params[p.id] ?? paramDefault(p)).replace(/[^A-Za-z0-9.]+/g, '_')}`).join('_');
 }
 
 /**
@@ -160,14 +248,20 @@ export function queryParamKey(app, q, params = {}) {
     return paramKey({ params: (app.params || []).filter(p => q.params.includes(p.id)) }, params);
 }
 
-/** Every combination of param values: [{ width: 5 }, { width: 10 }, ...]. */
+/**
+ * Every combination of param values: [{ width: 5 }, { width: 10 }, ...].
+ * pick[id] = 'all' runs every option; for a multi param it is the one value
+ * with every option chosen, and for a range param every span (low <= high).
+ */
 export function paramCombos(app, pick = {}) {
     let combos = [{}];
     for (const p of app.params || []) {
         const want = pick[p.id];
-        const vals = want === 'all' ? p.options.map(optionValue)
+        const opts = p.options.map(optionValue);
+        const vals = want === 'all' && p.control === 'range' ? opts.flatMap((a, i) => opts.slice(i).map(b => [a, b]))
+            : want === 'all' && p.control !== 'multi' ? opts
             : want !== undefined ? [resolveParams(app, { [p.id]: want })[p.id]]
-            : [p.default ?? optionValue(p.options[0])];
+            : [paramDefault(p)];
         combos = combos.flatMap(c => vals.map(v => ({ ...c, [p.id]: v })));
     }
     return combos;

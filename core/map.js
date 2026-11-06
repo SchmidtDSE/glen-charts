@@ -80,7 +80,10 @@ export class MapView {
      *   { id, url, source_layer, type = 'fill', paint, popup?(properties) → html, above? }
      * `above: true` draws it on top of the boundaries instead, so it stays visible
      * over leaderboard colours. Its popup is suppressed where a boundary is under
-     * the pointer either way, so the boundary's own popup wins.
+     * the pointer either way, so the boundary's own popup wins, unless
+     * `popup_priority: true`: then the overlay's popup shows wherever one of its
+     * features is under the pointer, and the boundary's popup and hover give way
+     * there. A click still selects the area underneath.
      */
     async addOverlay(o) {
         await this.ready;
@@ -90,9 +93,11 @@ export class MapView {
         m.addLayer({ id: layer, type: o.type || 'fill', source: src, 'source-layer': o.source_layer, paint: o.paint || {} }, o.above ? undefined : 'ref');
         (this._overlays ??= new Map()).set(o.id, layer);
         if (!o.popup) return;
+        if (o.popup_priority) (this._priorityLayers ??= new Set()).add(layer);
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
         m.on('mousemove', layer, e => {
-            if (this._drawing || (this.jur && m.getLayer('jur-fill') && m.queryRenderedFeatures(e.point, { layers: ['jur-fill'] }).length)) return;
+            if (this._drawing) return;
+            if (!o.popup_priority && this.jur && m.getLayer('jur-fill') && m.queryRenderedFeatures(e.point, { layers: ['jur-fill'] }).length) return popup.remove();
             const p = e.features[0]?.properties;
             if (p) popup.setLngLat(e.lngLat).setHTML(o.popup(p)).addTo(m);
         });
@@ -185,6 +190,12 @@ export class MapView {
             const f = e.features[0];
             if (!f || this._drawing) return;
             m.getCanvas().style.cursor = 'pointer';
+            if (this._overlayFirst(e.point)) {
+                // an overlay with popup_priority is under the pointer: its popup shows instead
+                this._clearHover();
+                this._popup.remove();
+                return;
+            }
             if (this._hoverId !== null && this._hoverId !== f.id) {
                 m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: this._hoverId }, { hover: false });
             }
@@ -199,10 +210,7 @@ export class MapView {
         });
         m.on('mouseleave', 'jur-fill', () => {
             m.getCanvas().style.cursor = '';
-            if (this._hoverId !== null) {
-                m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: this._hoverId }, { hover: false });
-            }
-            this._hoverId = null;
+            this._clearHover();
             this._popup.remove();
         });
         m.on('click', 'jur-fill', e => {
@@ -210,6 +218,19 @@ export class MapView {
             const f = e.features[0];
             if (f) this.onPick(String(f.properties[this.jur.boundary.id_prop] ?? f.id));
         });
+    }
+
+    _clearHover() {
+        if (this._hoverId !== null) {
+            this.map.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: this._hoverId }, { hover: false });
+        }
+        this._hoverId = null;
+    }
+
+    /** True when a feature of an overlay with popup_priority is drawn under the point. */
+    _overlayFirst(point) {
+        const layers = [...(this._priorityLayers || [])].filter(l => this.map.getLayer(l));
+        return layers.length > 0 && this.map.queryRenderedFeatures(point, { layers }).length > 0;
     }
 
     _tractAt(point) {

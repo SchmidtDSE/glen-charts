@@ -306,6 +306,41 @@ details.method pre {
 }
 .param-stops button:hover { color: var(--text); }
 .param-stops button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+#step-params .param-multi + .step-label, #step-params .param-range + .step-label { margin-top: 8px; }
+/* "control": "multi" params: a summary of the choice that opens to checkboxes */
+.param-multi { border: 1px solid var(--line); border-radius: 6px; background: var(--card-bg); font-size: 13px; }
+.param-multi summary { cursor: pointer; padding: 5px 9px; color: var(--text); }
+.param-multi .pm-body { padding: 6px 9px 8px; border-top: 1px solid var(--line); max-height: 300px; overflow-y: auto; }
+.param-multi input[type="checkbox"] { accent-color: var(--primary); margin: 0; }
+.pm-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 3px 12px; }
+.pm-opt, .pm-all, .pm-group legend label { display: flex; gap: 6px; align-items: center; cursor: pointer; color: var(--text-2); }
+.pm-all, .pm-group legend label { font-weight: 600; color: var(--text); }
+.pm-all { margin-bottom: 4px; }
+.pm-group { border: 0; padding: 0; margin: 8px 0 0; min-width: 0; }
+.pm-group legend { padding: 0; margin-bottom: 3px; }
+/* "control": "range" params: two handles on one track over the stops */
+.param-range { padding: 0 4px; }
+.pr-track { position: relative; height: 18px; width: calc(100% - 100% / var(--n)); margin: 4px calc(50% / var(--n)) 0; }
+.pr-track::before, .pr-fill { content: ''; position: absolute; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
+.pr-track::before { left: 0; right: 0; background: var(--line-strong); }
+.pr-fill { background: var(--primary); left: calc(var(--lo, 0) / var(--last) * 100%); width: calc((var(--hi, 0) - var(--lo, 0)) / var(--last) * 100%); }
+.pr-track input[type="range"] { position: absolute; inset: 0; width: 100%; height: 18px; margin: 0; background: none; -webkit-appearance: none; appearance: none; pointer-events: none; }
+.pr-track input[type="range"]::-webkit-slider-runnable-track { background: none; }
+.pr-track input[type="range"]::-moz-range-track { background: none; }
+.pr-track input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; pointer-events: auto; cursor: pointer;
+    width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card-bg); box-shadow: 0 0 0 1px var(--primary);
+}
+.pr-track input[type="range"]::-moz-range-thumb {
+    pointer-events: auto; cursor: pointer;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card-bg); box-shadow: 0 0 0 1px var(--primary);
+}
+.pr-track input[type="range"]:focus-visible { outline: none; }
+.pr-track input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+.pr-track input[type="range"]:focus-visible::-moz-range-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* both handles at the last stop: the "from" handle on top, so it can move left */
+.param-range.lo-top .pr-track input[type="range"]:first-of-type { z-index: 1; }
+.param-range .param-stops button.in-range { color: var(--text-2); }
 #source-steps:not(:has(> :not([hidden]))) { display: none; }
 #source-steps { display: contents; }
 

@@ -58,7 +58,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `data_base` | folder holding `data/`, when a site variant shares another's |
 | `pages` | extra tabs that show an HTML file, e.g. an About page: `[{ "id": "about", "label": "About", "file": "config/about.html", "full": true, "sources": true }]`. `full` hides the map and gives the panel the whole width; `sources` appends the citations of every dataset the app queries, from `data/sources.json` (`precompute sources`). The tab is kept in the link (`?view=about`) |
 | `chat` | an optional assistant; see [Chat](#chat). Without this block no LLM code loads |
-| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them |
+| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them; `"popup_priority": true` shows its popup rather than the area's wherever one of its features is under the pointer, for features that lie inside areas such as project footprints (without it the area's popup wins); a click still selects the area underneath |
 
 An area type:
 
@@ -98,6 +98,35 @@ A slider param can hold offsets from a value that depends on the chosen area, su
   "relative": { "theme": "exposure", "query": "base", "field": "leaf_c", "format": "num1",
                 "note": "The slider starts at the team's value, {} °C.", "offset_format": "{} °C from the team's value" } }
 ```
+
+A param with `"control": "multi"` holds any set of its options, drawn as checkboxes under a summary of the choice. An option's `group` puts it under a heading that ticks the whole group, and an "All" box (`all_label`, default "All") ticks every option. The token expands to a SQL list of the chosen values, and `{{<TOKEN>_ALL}}` to `true` when every option is chosen:
+
+```json
+{ "id": "funder", "label": "Funder", "token": "FUNDER", "control": "multi", "all_label": "All funders",
+  "options": [{ "value": "wcb", "label": "Wildlife Conservation Board", "group": "State" },
+              { "value": "lwcf", "label": "Land and Water Conservation Fund", "group": "Federal" }] }
+```
+
+```sql
+WHERE {{FUNDER_ALL}} OR list_contains({{FUNDER}}, funder)   -- {{FUNDER}} is ['wcb', 'lwcf']
+```
+
+The default is every option; `"default"` may give a list instead. At least one option stays ticked. The link holds the chosen values, comma-separated (`?funder=wcb,lwcf`), and nothing when every option is chosen; the cache key holds the same, with `all` for every option. Option values may not contain commas, and `all` is reserved.
+
+A param with `"control": "range"` holds two of its options, which are ordered stops, drawn as a slider with two handles. It binds `{{<TOKEN>_MIN}}` and `{{<TOKEN>_MAX}}`, or the two names in `"tokens"`:
+
+```json
+{ "id": "years", "label": "Years", "token": "YEAR", "control": "range", "options": [1990, 2000, 2010, 2015, 2020, 2025],
+  "default": [2000, 2025], "all_label": "All years" }
+```
+
+```sql
+WHERE year BETWEEN {{YEAR_MIN}} AND {{YEAR_MAX}}
+```
+
+The default is the full span. The link holds `?years=2000,2020`; the settings line shows "Years: 2000 – 2020", or `all_label` for the full span. Clicking a stop moves the nearer handle.
+
+Values of both controls are restricted to the declared options, so they are safe in SQL. With the precompute CLI, `--param years=all` runs every span of a range param (low ≤ high), and `--param funder=all` runs a multi param with every option chosen; any other value is given as in the link (`--param funder=wcb,lwcf`).
 
 Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
 
@@ -192,7 +221,7 @@ What configuration cannot express, an app passes to `createExplorer({ extensions
 export default {
   tokens:   { LAND: (aoi, app, params) => '...SQL...' },        // extra template tokens
   charts:   { representation: { load(ctx), render(el, chart, data, ctx), css } },
-  overlays: [{ id, url, source_layer, type, paint, popup: props => html, legend: html, toggle: 'Show …' }],
+  overlays: [{ id, url, source_layer, type, paint, popup: props => html, popup_priority, legend: html, toggle: 'Show …' }],
   sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
@@ -265,7 +294,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.7.1 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.8.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

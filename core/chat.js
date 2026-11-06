@@ -28,7 +28,7 @@
 
 import { renderBarChart } from './charts.js';
 import { fmt, escapeHtml } from './format.js';
-import { optionValue, optionLabel } from './engine.js';
+import { optionValue, paramLabel, paramTokenNames, normalizeParam } from './engine.js';
 
 const HARNESS = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/glen-harness@v0.1.0';
 const MAX_ROWS = 100;          // rows of a query result passed back to the model
@@ -120,7 +120,7 @@ class Chat {
         const panels = themes.map(t => `### Panel "${t.label}" (theme ${t.id})\n${t.blurb || ''}\n` +
             Object.keys(t.queries).map(q => `Query ${q}:\n\`\`\`sql\n${t.sql[q].trim()}\n\`\`\``).join('\n')).join('\n\n');
         const types = app.jurisdictions.map(j => `${j.id} (${j.label})`).join(', ');
-        const params = app.params.map(p => `${p.id} (token {{${p.token || p.id.toUpperCase()}}}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}`).join('\n');
+        const params = app.params.map(p => `${p.id} (${paramTokenDoc(p)}): ${p.options.map(o => `${optionValue(o)}${typeof o === 'object' && o.label ? ` = ${o.label}` : ''}`).join(', ')}`).join('\n');
         return `You are the assistant in "${app.title || document.title}", a map and report of fixed panels about an area the reader chooses. You answer questions with data, by running SQL on DuckDB (with the spatial, h3 and httpfs extensions) through the query tool. Never invent numbers: every number you state comes from a query result or from current_view.
 
 Area tokens. SQL you pass to query or add_card may use these tokens, which are expanded for the area the reader has chosen:
@@ -153,7 +153,7 @@ ${this.stateText()}`;
         const s = this.ex.state;
         const a = s.aoi;
         const area = a ? `Area: ${a.label} (type ${a.kind}${a.id != null && a.kind !== 'polygon' ? `, id ${a.id}` : ''}).` : 'No area is chosen yet; area tokens are unbound until the reader picks one or you call select_area.';
-        const ps = this.app.params.map(p => `${p.label || p.id}: ${optionLabel(p, p.options.find(o => String(optionValue(o)) === String(s.params[p.id])) ?? s.params[p.id])}`).join('; ');
+        const ps = this.app.params.map(p => `${p.label || p.id}: ${paramLabel(p, s.params[p.id])}`).join('; ');
         return `${area}${ps ? `\nSettings: ${ps}.` : ''}`;
     }
 
@@ -221,12 +221,12 @@ ${this.stateText()}`;
             },
             {
                 name: 'set_param',
-                description: `Change a setting. ${this.app.params.map(p => `${p.id}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
+                description: `Change a setting. ${this.app.params.map(p => `${p.id}${p.control === 'multi' ? ' (any of, comma-separated, or all)' : p.control === 'range' ? ' (low,high)' : ''}: ${p.options.map(optionValue).join(', ')}`).join('; ')}`,
                 inputSchema: { type: 'object', properties: { id: { type: 'string' }, value: { type: 'string' } }, required: ['id', 'value'] },
                 execute: async ({ id, value }) => {
                     const p = this.app.params.find(x => x.id === id);
                     if (!p) throw new Error(`Unknown setting ${id}.`);
-                    if (!p.options.some(o => String(optionValue(o)) === String(value))) throw new Error(`${id} must be one of ${p.options.map(optionValue).join(', ')}.`);
+                    if (normalizeParam(p, value) === null) throw new Error(`${id} must be ${p.control === 'multi' ? 'any of' : p.control === 'range' ? 'two of' : 'one of'} ${p.options.map(optionValue).join(', ')}.`);
                     await this.ex.setParam(id, value);
                     return { [id]: value };
                 },
@@ -330,4 +330,12 @@ export function renderCardBody(el, spec, rows) {
 function clip(obj) {
     const s = JSON.stringify(obj);
     return s.length > MAX_CHARS ? s.slice(0, MAX_CHARS) + '… [truncated]' : s;
+}
+
+/** How a param appears in SQL, for the system prompt. */
+function paramTokenDoc(p) {
+    const [a, b] = paramTokenNames(p);
+    if (p.control === 'multi') return `token {{${a}}}, a SQL list of the chosen values such as ['x', 'y'], for list_contains({{${a}}}, col); {{${b}}} is true when every value is chosen`;
+    if (p.control === 'range') return `tokens {{${a}}} and {{${b}}}, the low and high ends of the chosen range`;
+    return `token {{${a}}}`;
 }
