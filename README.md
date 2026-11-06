@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.5.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.12.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -79,6 +79,7 @@ An area type:
 - The boundary `url` and `source_layer` may contain param tokens too, for areas with one tile set per param value (`".../level_0{{LEVEL}}.pmtiles"`); the boundaries reload when the param changes, keeping the selection and leaderboard colours.
 - `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
 - `picker: "map"` chooses areas by clicking the map only: the search box gives way to `labels.place_hint` (e.g. "Click a coastline on the map").
+- `multiple: true` lets the reader choose several areas of the type at once. Each pick from the list adds one, shown as a removable tag under the search box. A map click adds an area, or removes it if it is already chosen. The chosen areas are outlined together, the map fits to all of them, and the profile covers their union: `{{AOI}}` and `{{AOI10}}` are the `UNION` of each area's `aoi`/`aoi10`. The title lists the names, and the link holds the ids, comma-separated (`#county/06001,06013`). With several areas `{{ID}}` is unbound (and no precomputed single-area rows apply); use `{{IDS}}`, the ids as a quoted SQL list bound for one area or several, as in `GEOID IN ({{IDS}})`. Extension code reads them as `aoi.ids`. With one area chosen, everything is as without `multiple`. Opening a leaderboard row chooses that area alone, and so does the assistant's `select_area` unless it passes `add: true`. A chosen area stays chosen when a setting change leaves it out of the list.
 
 ### Params
 
@@ -99,21 +100,48 @@ A slider param can hold offsets from a value that depends on the chosen area, su
                 "note": "The slider starts at the team's value, {} °C.", "offset_format": "{} °C from the team's value" } }
 ```
 
-A param with `"control": "multi"` holds any set of its options, drawn as checkboxes under a summary of the choice. An option's `group` puts it under a heading that ticks the whole group, and an "All" box (`all_label`, default "All") ticks every option. The token expands to a SQL list of the chosen values, and `{{<TOKEN>_ALL}}` to `true` when every option is chosen:
+Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
+
+With `"control": "number"` a param is drawn as a box for a typed number instead, for a setting a reader may want to set exactly, such as a threshold. A typed value is held to the nearest option (and to the first or last option past either end), so the value is still one of the options and still safe in SQL; give the options at the precision the box should take, such as steps of 0.1. With `relative` the box shows and takes absolute values, base plus offset, and is disabled until an area is chosen. The line under the box gives the range a value is held to.
+
+A headline, a chart, a chart series or `app.reference` may carry `"when": { "<param id>": value }` (or a list of values) to apply only at those settings. A setting that changes what a number means can then swap its tiles and labels, and keep a published reference value off a view it does not describe:
 
 ```json
-{ "id": "funder", "label": "Funder", "token": "FUNDER", "control": "multi", "all_label": "All funders",
-  "options": [{ "value": "wcb", "label": "Wildlife Conservation Board", "group": "State" },
-              { "value": "lwcf", "label": "Land and Water Conservation Fund", "group": "Federal" }] }
+"reference": { "values": "data/report.json", "label": "Report", "when": { "manager": "all" } },
+...
+{ "query": "protection", "field": "frac_gap12", "label": "In 30x30", "when": { "manager": "all" } },
+{ "query": "protection", "field": "frac_gap12", "label": "Manager's land in 30x30", "when": { "manager": ["federal", "state"] } }
 ```
 
-```sql
-WHERE {{FUNDER_ALL}} OR list_contains({{FUNDER}}, funder)   -- {{FUNDER}} is ['wcb', 'lwcf']
+The export runs only the queries of the items shown.
+
+A param may carry `when` too, which makes it a drill-down: its control shows only at those settings of the params before it, and elsewhere it is held at its default and left out of the file and cache key, so adding it does not rename the files of the settings it does not apply to. Under Federal, say, a second control picks one agency:
+
+```json
+{ "id": "agency", "label": "Agency", "token": "AGENCY", "default": "all", "when": { "manager": "federal" },
+  "options": [{ "value": "all", "label": "All federal" }, { "value": "usfs", "label": "Forest Service" }] }
 ```
 
-The default is every option; `"default"` may give a list instead. At least one option stays ticked. The link holds the chosen values, comma-separated (`?funder=wcb,lwcf`), and nothing when every option is chosen; the cache key holds the same, with `all` for every option. Option values may not contain commas, and `all` is reserved.
+The keys are then `manager-state`, `agency-all_manager-federal` and `agency-usfs_manager-federal`.
 
-A param with `"control": "range"` holds two of its options, which are ordered stops, drawn as a slider with two handles. It binds `{{<TOKEN>_MIN}}` and `{{<TOKEN>_MAX}}`, or the two names in `"tokens"`:
+With `"multiple": true` the reader may choose several options at once. The param is drawn as toggle pills, each chosen one highlighted, and its value is a list of options in option order:
+
+```json
+{ "id": "ptype", "label": "Project type", "token": "PTYPE", "multiple": true, "any": "Any", "default": "Any",
+  "options": ["Any", "Acquisition", "Easement", "Restoration"] }
+```
+
+- The token is a SQL list: `'Acquisition', 'Restoration'`, with quotes doubled inside values, or bare numbers when every option is a number. Use it as `x IN ({{PTYPE}})` or `list_has_any(types, [{{PTYPE}}])`. Extension tokens get the list as `params.ptype`.
+- `any` names an option that stands for all of them. It is exclusive: choosing it clears the others, and choosing another clears it. Clearing the last other pill falls back to it. Without `any`, the last pill cannot be cleared. Test it in SQL as `'Any' IN ({{PTYPE}}) OR ...`.
+- `default` may be one value or a list.
+- An option's `group` (`{ "value": "wcb", "label": "WCB", "group": "State" }`) puts its pill under a heading for the group, and the heading chooses the whole group, or clears it when all of it is chosen. Options without a group come first. Other fields on an option are ignored, so extension tokens may read their own from `app.params`.
+- Option values may not contain a comma: the link and `set_param` separate values with commas A warning is logged when the config loads if one does.
+- The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `~` (`ptype-Acquisition~Restoration`; not `+`, which some servers, S3 among them, read as a space in a path). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
+- A `when` that names a multiple param matches only when every chosen value is one it names.
+- `precompute --param ptype=all` runs each option on its own, not every combination. `--param ptype=a,b` runs that one list. Other choices run live.
+- `multiple` uses pills only, not `control: "slider"` or `"number"`.
+
+With `"control": "range"` the value is two of the options, which are ordered stops, drawn as a slider with two handles. It binds `{{<TOKEN>_MIN}}` and `{{<TOKEN>_MAX}}`, or the two names in `"tokens"`:
 
 ```json
 { "id": "years", "label": "Years", "token": "YEAR", "control": "range", "options": [1990, 2000, 2010, 2015, 2020, 2025],
@@ -124,11 +152,10 @@ A param with `"control": "range"` holds two of its options, which are ordered st
 WHERE year BETWEEN {{YEAR_MIN}} AND {{YEAR_MAX}}
 ```
 
-The default is the full span. The link holds `?years=2000,2020`; the settings line shows "Years: 2000 – 2020", or `all_label` for the full span. Clicking a stop moves the nearer handle.
-
-Values of both controls are restricted to the declared options, so they are safe in SQL. With the precompute CLI, `--param years=all` runs every span of a range param (low ≤ high), and `--param funder=all` runs a multi param with every option chosen; any other value is given as in the link (`--param funder=wcb,lwcf`).
-
-Once an area is chosen, the explorer runs `relative.query` (a theme query returning `field` in its first row) and labels each stop as that base plus the offset, so the reader sees absolute values. The token, the link and the cache key keep the offset, so a shared link means "the team's value plus 1" for whichever area it names. Before an area is chosen the stops show signed offsets; `offset_format` labels the offset in the report's settings line.
+- The default is the full span. The value is held to the declared stops, low first, so it is safe in SQL.
+- The link holds `?years=2000,2020`, and the file and cache key `years-2000~2020`. The settings line shows "Years: 2000 – 2020", or `all_label` for the full span. The assistant's `set_param` takes `2000,2020`.
+- Clicking a stop moves the nearer handle.
+- `precompute --param years=all` runs every span (low ≤ high); `--param years=2000,2020` runs one.
 
 ## Themes
 
@@ -144,11 +171,13 @@ Once an area is chosen, the explorer runs `relative.query` (a theme query return
   "map": { "query": "...", "id_field": "GEOID", "value_field": "v", "label": "...", "format": "pct", "ramp": ["#...", "..."] } }
 ```
 
+A headline's `area_template` names the area under the value, with `{}` the area's label: `"area_template": "of {}"` reads "of Sonoma County" on a county and "of California" on the whole region, so a share is not mistaken for the region's when the region's value is shown beneath it.
+
 `map.type: "hex"` draws H3 cells instead of tracts: `id_field` holds each cell's id as a string (`h3_h3_to_string`), so the page needs [h3-js](https://github.com/uber/h3-js).
 
 When `app.tracts` lists several grids, `map.levels` names the query for each grid by its id (`{ "h6": "map_h6", "h7": "map" }`; a grid not named uses `map.query`). Each grid's rows carry that grid's `id_prop` column, and fixed `breaks` keep the colours the same across grids (quantile breaks come from the first grid).
 
-Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
+Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon; `{{ID}}` not for several areas together), `{{IDS}}` (the named area's ids as a quoted SQL list), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
 
 **Formats:** `int`, `num`, `num1`, `num2`, `compact`, `pct` (0–1), `pct100`, `usd`, `acres`, `km2`, `ha`, `meters`, `degC`, `tempC`, `per1k`, `ordinal`, `text`. A NULL or NaN shows as `format.nodata`; bar charts leave it out rather than drawing zero.
 
@@ -294,7 +323,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.8.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.13.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

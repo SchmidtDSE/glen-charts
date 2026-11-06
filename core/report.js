@@ -19,6 +19,7 @@
 import { renderBarChart } from './charts.js';
 import { percentileStrip } from '../charts/percentile-strip.js';
 import { fmt, escapeHtml } from './format.js';
+import { matchesWhen } from './engine.js';
 
 export const barChart = {
     load({ engine, theme, chart: c, aoi, isRegion, params }) {
@@ -56,6 +57,14 @@ export const builtinCharts = { bar: barChart, 'percentile-strip': percentileStri
 export function renderThemeCard(engine, theme, aoi, opts = {}) {
     const { overview = false, isCurrent = () => true, onMapToggle = null, charts: registry = builtinCharts, params = aoi.params || {} } = opts;
     opts = { compareLabel: engine.config.app.statewide?.label || 'Region', reference: null, shortName: s => s, ...opts };
+    // items with a `when` show only at the settings it names; reference values
+    // describe the region at the settings app.reference.when names (any, without it)
+    const app = engine.config.app;
+    const applies = x => matchesWhen(x.when, app, params);
+    if (opts.reference && !matchesWhen(opts.reference.when, app, params)) opts = { ...opts, reference: null };
+    const headlines = (theme.headlines || []).filter(applies);
+    const chartSpecs = (theme.charts || []).filter(applies)
+        .map(c => (c.series?.some(x => x.when) ? { ...c, series: c.series.filter(applies) } : c));
     const isRegion = aoi.kind === 'state';
     const hasRegion = !!engine.config.app.statewide;
     const card = document.createElement('section');
@@ -79,8 +88,8 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
     }
 
     const tiles = card.querySelector('.tiles');
-    tiles.dataset.n = (theme.headlines || []).length;
-    for (const h of theme.headlines || []) {
+    tiles.dataset.n = headlines.length;
+    for (const h of headlines) {
         const t = document.createElement('div');
         t.className = 'tile skeleton';
         t.innerHTML = `<div class="tile-label">${escapeHtml(h.label)}</div><div class="tile-value">0000</div><div class="tile-compare">&nbsp;</div>`;
@@ -97,6 +106,7 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
                 t.innerHTML = `
                     <div class="tile-label">${escapeHtml(h.label)}</div>
                     <div class="tile-value">${fmt(v, h.format)}</div>
+                    ${h.area_template && aoi.label ? `<div class="tile-area">${escapeHtml(h.area_template.replace('{}', aoi.label))}</div>` : ''}
                     ${wantRegion && sv !== undefined && sv !== null ? `<div class="tile-compare">${escapeHtml(opts.compareLabel)}: ${fmt(sv, h.compare_format || h.format)}</div>` : ''}
                     ${rv != null ? `<div class="tile-compare" title="${escapeHtml(opts.reference.title || opts.reference.label)}">${escapeHtml(opts.reference.label)}: ${fmt(rv, h.format)}</div>` : ''}
                     ${h.detail_field && row?.[h.detail_field] != null ? `<div class="tile-note">${escapeHtml(h.detail_template.replace('{}', fmt(row[h.detail_field], h.detail_format)))}</div>` : ''}
@@ -107,7 +117,7 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
     }
 
     const charts = card.querySelector('.charts');
-    for (const c of theme.charts || []) {
+    for (const c of chartSpecs) {
         const type = registry[c.type || 'bar'];
         const box = document.createElement('div');
         box.className = 'chart' + (c.wide ? ' wide' : '');

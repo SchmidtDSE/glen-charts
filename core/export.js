@@ -12,6 +12,7 @@
 
 import { matchSources } from './sources.js';
 import { escapeHtml } from './format.js';
+import { matchesWhen } from './engine.js';
 
 const GEO_AGENT_EXPORT = 'https://cdn.jsdelivr.net/gh/boettiger-lab/geo-agent@v3.35.0/app/export-report.js';
 const OUTPUT_ROWS = 20;
@@ -55,7 +56,7 @@ export async function exportReport(o) {
     for (const theme of o.themes) {
         const card = o.reportEl.querySelector(`.card[data-theme="${CSS.escape(theme.id)}"]`);
         const queries = [];
-        for (const name of usedQueries(theme)) {
+        for (const name of usedQueries(theme, o.engine.config.app, o.aoi.params)) {
             let rows = null, error = null;
             try { rows = await o.engine.run(theme, name, o.aoi); } catch (err) { error = err.message || String(err); }
             let sql;
@@ -113,11 +114,12 @@ async function settled(el, timeoutMs = 300000) {
     await new Promise(r => setTimeout(r, 300));   // ranks and other late tile details
 }
 
-/** Queries a theme's panel shows: headlines, charts (incl. pivots) and its map. */
-function usedQueries(theme) {
+/** Queries a theme's panel shows at these settings: headlines, charts (incl. pivots) and its map. */
+function usedQueries(theme, app = {}, params = {}) {
     const names = new Set();
-    for (const h of theme.headlines || []) names.add(h.query);
-    for (const c of theme.charts || []) {
+    const applies = x => matchesWhen(x.when, app, params);
+    for (const h of (theme.headlines || []).filter(applies)) names.add(h.query);
+    for (const c of (theme.charts || []).filter(applies)) {
         if (c.pivot) c.pivot.forEach(p => names.add(p.query));
         else names.add(c.query);
     }
