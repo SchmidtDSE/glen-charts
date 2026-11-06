@@ -223,10 +223,10 @@ export class MapView {
         return L.values.has(id) ? { id, value: L.values.get(id) } : null;
     }
 
+    /** Outline one area, or several (a list of ids) together; bbox fits the view to them. */
     async select(id, bbox) {
         await this.ready;
-        const b = this.jur.boundary;
-        this._selectedId = String(id);
+        this._selectedId = Array.isArray(id) ? (id.length ? id.map(String) : null) : String(id);
         this.map.setFilter('jur-selected', this._selectedFilter());
         if (bbox && bbox.every(Number.isFinite)) {
             // xmin > xmax: the area crosses the antimeridian; fit across it
@@ -248,7 +248,8 @@ export class MapView {
 
     _selectedFilter() {
         const b = this.jur.boundary;
-        const byId = ['==', ['to-string', ['get', b.id_prop]], this._selectedId ?? '__none__'];
+        const key = ['to-string', ['get', b.id_prop]];
+        const byId = Array.isArray(this._selectedId) ? ['in', key, ['literal', this._selectedId]] : ['==', key, this._selectedId ?? '__none__'];
         return b.filter ? ['all', this._boundaryFilter(), byId] : byId;
     }
 

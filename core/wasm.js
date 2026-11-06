@@ -92,13 +92,16 @@ export class WasmQueryClient {
     /** Swap tiled datasets' globs for the area's county files (fetching them), then apply path rewrites. */
     async planTiles(sql, aoi) {
         const files = [];
-        if (this.tiles && aoi?.kind && aoi.id) {
+        // one named area, or several chosen together (aoi.ids): the counties any of them touches
+        const ids = aoi?.ids?.length ? aoi.ids : aoi?.id ? [aoi.id] : [];
+        if (this.tiles && aoi?.kind && ids.length) {
             // if the tile set can't be reached, fall back to reading the public data remotely (slow)
             const [manifest, lists] = await Promise.all([
                 this.getJson(`${this.tiles.url}/manifest.json`).catch(() => null),
                 this.getJson(`${this.tiles.counties}/${aoi.kind}-counties.json`).catch(() => null),
             ]);
-            const counties = lists?.[aoi.id];
+            const per = ids.map(id => lists?.[id]);
+            const counties = per.every(Boolean) ? [...new Set(per.flat())] : null;
             if (manifest && counties) {
                 sql = sql.replace(/read_parquet\('s3:\/\/([^']+?)\/h0=\*\/data_0\.parquet'\)/g, (m, rel) => {
                     const have = manifest.datasets[rel];

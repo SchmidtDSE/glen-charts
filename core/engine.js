@@ -10,7 +10,10 @@
  *   {{AOI10}}  → a SELECT returning DISTINCT (h0, h8, h10) res-10 cells.
  *   {{ID}}     → the sanitized feature id, in area-type aoi/aoi10 templates and,
  *                for a named area, in theme SQL ({{KIND}} is its area type).
- *                Unbound for the whole region and for drawn polygons.
+ *                Unbound for the whole region, for drawn polygons and for
+ *                several areas chosen together.
+ *   {{IDS}}    → the named area's ids as a quoted SQL list ('06001', '06013'),
+ *                bound for one area as well as several, for `x IN ({{IDS}})`.
  *   {{SITE}}   → (jurisdiction aoi/aoi10 templates) absolute URL of the site
  *                folder, for templates that read the site's own data files.
  *   {{<PARAM>}} → the current value of each app param (app.json "params",
@@ -25,6 +28,11 @@
  *                "options": [5, 10, 20, 50], "default": 10, "format": "{} km" }]
  *   A param's value is always one of its options, so it is safe to splice into
  *   SQL. It is part of every cache key and of precomputed file paths.
+ *   With "multiple": true the value is a list of options (in option order) and
+ *   the token is a SQL list, 'a', 'b' (bare numbers when every option is a
+ *   number), for `x IN ({{TOKEN}})` or `[{{TOKEN}}]`. "any": <value> names an
+ *   option that stands for all of them: it is exclusive, and an empty choice
+ *   falls back to it.
  *
  * Theme ids in app.json may be paths (e.g. "../config/themes/equity") so a
  * site variant can reuse another variant's themes; the id is the last segment.
@@ -36,6 +44,12 @@ export async function loadConfig(base = '.', fetchText = defaultFetchText, { the
     const app = JSON.parse(await fetchText(`${base}/config/app.json`));
     app.jurisdictions ??= [];
     app.params ??= [];
+    // the link and set_param separate a multiple param's values with commas
+    for (const p of app.params) {
+        if (!p.multiple) continue;
+        const bad = p.options.map(optionValue).filter(v => String(v).includes(','));
+        if (bad.length) console.warn(`Param "${p.id}" is multiple, but option values may not contain a comma: ${bad.join('; ')}`);
+    }
     const themes = [];
     for (let id of [app.overview, ...(app.themes || [])].filter(Boolean)) {
         const dir = id.includes('/') ? `${base}/${id}` : `${base}/config/themes/${id}`;
@@ -97,6 +111,9 @@ export function expand(template, tokens, where = '') {
     }).join('\n');
 }
 
+/** SQL with its `--` comments removed (tokens in comments are never expanded). */
+const stripComments = sql => String(sql ?? '').split('\n').map(line => { const c = commentStart(line); return c < 0 ? line : line.slice(0, c); }).join('\n');
+
 /** Index of a `--` comment outside a quoted string, or -1. */
 function commentStart(line) {
     let q = null;
@@ -122,11 +139,62 @@ export function resolveParams(app, given = {}) {
     const out = {};
     for (const p of app.params || []) {
         const want = given[p.id];
+        if (p.multiple) {
+            out[p.id] = want !== undefined && matchesWhen(p.when, app, out) ? multiValue(p, want) : paramDefault(p);
+            continue;
+        }
         const hit = want !== undefined && matchesWhen(p.when, app, out) && p.options.find(o => String(optionValue(o)) === String(want));
-        out[p.id] = hit !== undefined && hit !== false ? optionValue(hit) : (p.default ?? optionValue(p.options[0]));
+        out[p.id] = hit !== undefined && hit !== false ? optionValue(hit) : paramDefault(p);
     }
     return out;
 }
+
+/** A param's default value: `default`, else its first option; a list for a "multiple" param. */
+export function paramDefault(p) {
+    const d = p.default ?? optionValue(p.options[0]);
+    if (!p.multiple) return d;
+    const v = multiValue(p, d, null);
+    return v.length ? v : [optionValue(p.options[0])];
+}
+
+/**
+ * A "multiple" param's value from a list, one value, or a comma-separated
+ * string (as in the link): the options it names, in option order. "any"
+ * (p.any, an option standing for all) is exclusive: given with others it is
+ * dropped, and an empty choice falls back to it, or to the default.
+ */
+export function multiValue(p, want, fallback = undefined) {
+    const raw = Array.isArray(want) ? want.map(String)
+        : want === undefined || want === null || want === '' ? []
+        : p.options.some(o => String(optionValue(o)) === String(want)) ? [String(want)]   // one value that holds a comma
+        : String(want).split(',');
+    let vals = p.options.map(optionValue).filter(v => raw.includes(String(v)));
+    if (p.any !== undefined && vals.length > 1) vals = vals.filter(v => String(v) !== String(p.any));
+    if (vals.length) return vals;
+    if (fallback !== undefined) return fallback ?? [];
+    return p.any !== undefined && p.options.some(o => String(optionValue(o)) === String(p.any)) ? [optionValue(p.options.find(o => String(optionValue(o)) === String(p.any)))] : paramDefault(p);
+}
+
+/**
+ * The value after the reader clicks one pill of a "multiple" param: it is
+ * added or removed; "any" clears the others, a specific pill clears "any",
+ * and removing the last specific pill falls back to "any" (or keeps it, when
+ * the param has none, so the choice is never empty).
+ */
+export function toggleMulti(p, current, value) {
+    const cur = [].concat(current ?? []).map(String);
+    const v = String(value);
+    const isAny = p.any !== undefined && v === String(p.any);
+    let next;
+    if (isAny) next = [v];
+    else if (cur.includes(v)) next = cur.filter(x => x !== v);
+    else next = [...cur.filter(x => p.any === undefined || x !== String(p.any)), v];
+    if (!next.length) return p.any !== undefined ? multiValue(p, [String(p.any)]) : multiValue(p, cur);
+    return multiValue(p, next);
+}
+
+/** A param's value as a list: the value of a "multiple" param, or [value]. */
+export const paramValues = (p, v) => (Array.isArray(v) ? v : [v]);
 
 /** Whether a param applies at the current settings (its `when`, if any, matches). */
 export const paramActive = (p, app, params = {}) => matchesWhen(p.when, app, params);
@@ -141,8 +209,10 @@ export function matchesWhen(when, app, params = {}) {
     if (!when) return true;
     return Object.entries(when).every(([id, want]) => {
         const p = (app.params || []).find(x => x.id === id);
-        const v = String(params[id] ?? p?.default ?? optionValue(p?.options?.[0]));
-        return (Array.isArray(want) ? want : [want]).some(w => String(w) === v);
+        // a "multiple" param matches when every value chosen is one the item names
+        const vs = paramValues(p, params[id] ?? (p ? paramDefault(p) : undefined)).map(String);
+        const ws = (Array.isArray(want) ? want : [want]).map(String);
+        return vs.length > 0 && vs.every(v => ws.includes(v));
     });
 }
 
@@ -156,6 +226,14 @@ export const optionLabel = (p, o) => {
     const f = (p.relative && p.relative.offset_format) || p.format;
     return f ? f.replace('{}', text) : text;
 };
+
+/** The label of a param's current value: its option's label, or, for a "multiple" param, the labels joined. */
+export function paramValueLabel(p, value) {
+    return paramValues(p, value).map(v => {
+        const o = p.options.find(x => String(optionValue(x)) === String(v));
+        return o === undefined ? String(v) : optionLabel(p, o);
+    }).join(', ');
+}
 
 /**
  * The option nearest to a typed number, so a number box still sets one of the param's options
@@ -174,12 +252,17 @@ export function nearestOption(p, x) {
 export function paramTokens(app, params = {}) {
     const out = {};
     for (const p of app.params || []) {
-        const v = params[p.id] ?? p.default;
-        if (!p.options.some(o => String(optionValue(o)) === String(v))) throw new Error(`Invalid value for ${p.id}: ${v}`);
-        out[p.token || p.id.toUpperCase()] = String(v);
+        const v = params[p.id] ?? paramDefault(p);
+        const vs = p.multiple ? paramValues(p, v) : [v];
+        for (const x of vs) if (!p.options.some(o => String(optionValue(o)) === String(x))) throw new Error(`Invalid value for ${p.id}: ${x}`);
+        if (p.multiple && !vs.length) throw new Error(`No value for ${p.id}`);
+        out[p.token || p.id.toUpperCase()] = p.multiple ? sqlList(vs, p.options.every(o => typeof optionValue(o) === 'number')) : String(v);
     }
     return out;
 }
+
+/** 'a', 'b' (quotes doubled), or 1, 2 for numbers: a list to splice into IN (...) or [...]. */
+export const sqlList = (vals, numeric = false) => vals.map(v => (numeric ? String(Number(v)) : `'${String(v).replace(/'/g, "''")}'`)).join(', ');
 
 /**
  * "width-10" (sorted by id), or '' when the app has no params. File and cache key part.
@@ -188,7 +271,7 @@ export function paramTokens(app, params = {}) {
  */
 export function paramKey(app, params = {}) {
     return (app.params || []).filter(p => paramActive(p, app, params)).sort((a, b) => a.id.localeCompare(b.id))
-        .map(p => `${p.id}-${String(params[p.id] ?? p.default).replace(/[^A-Za-z0-9.]+/g, '_')}`).join('_');
+        .map(p => `${p.id}-${paramValues(p, params[p.id] ?? paramDefault(p)).map(v => String(v).replace(/[^A-Za-z0-9.]+/g, '_')).join('~')}`).join('_');
 }
 
 /**
@@ -201,12 +284,18 @@ export function queryParamKey(app, q, params = {}) {
     return paramKey({ params: (app.params || []).filter(p => q.params.includes(p.id)) }, params);
 }
 
-/** Every combination of param values: [{ width: 5 }, { width: 10 }, ...]. */
+/**
+ * Every combination of param values: [{ width: 5 }, { width: 10 }, ...]. For a
+ * "multiple" param, 'all' takes each option on its own ([v]), not every subset;
+ * a comma-separated pick ("a,b") is one list.
+ */
 export function paramCombos(app, pick = {}) {
     let combos = [{}];
     for (const p of app.params || []) {
         const want = pick[p.id];
-        const vals = want === 'all' ? p.options.map(optionValue)
+        const vals = p.multiple
+            ? (want === 'all' ? p.options.map(o => [optionValue(o)]) : [want !== undefined ? multiValue(p, want) : paramDefault(p)])
+            : want === 'all' ? p.options.map(optionValue)
             : want !== undefined ? [optionValue(p.options.find(o => String(optionValue(o)) === String(want)) ?? p.default ?? p.options[0])]
             : [p.default ?? optionValue(p.options[0])];
         combos = combos.flatMap(c => vals.map(v => ({ ...c, [p.id]: v })));
@@ -228,20 +317,56 @@ export function paramCombos(app, pick = {}) {
  * the themes don't care which.
  */
 export function jurisdictionAoi(jur, feature, app = null, params = {}) {
+    // several features (an area type with "multiple": true): the union of their cells
+    if (Array.isArray(feature)) {
+        if (feature.length === 1) return jurisdictionAoi(jur, feature[0], app, params);
+        return multiAoi(jur, feature, app, params);
+    }
     const id = sanitizeId(feature.id);
-    const SITE = globalThis.location ? new URL('.', globalThis.location.href).href.replace(/\/$/, '') : '.';
+    const SITE = siteUrl();
     const pt = app ? paramTokens(app, params) : {};
     const pk = app ? paramKey(app, params) : '';
     return {
         key: `${jur.id}:${id}${pk ? '@' + pk : ''}`,
         kind: jur.id,
         id,
+        ids: [id],
         label: feature.name,
         params,
         sql: expand(jur.aoi, { ...pt, ID: id, SITE }).trim(),
         sql10: jur.aoi10 ? expand(jur.aoi10, { ...pt, ID: id, SITE }).trim() : undefined,
     };
 }
+
+const siteUrl = () => (globalThis.location ? new URL('.', globalThis.location.href).href.replace(/\/$/, '') : '.');
+
+/**
+ * Several features of one area type as one area: sql and sql10 are the UNION of
+ * each feature's cells. `id` is null (so {{ID}} is unbound and no precomputed
+ * single-area rows are used); `ids` lists them, and {{IDS}} is their SQL list.
+ */
+function multiAoi(jur, features, app, params) {
+    const ids = features.map(f => sanitizeId(f.id));
+    const SITE = siteUrl();
+    const pt = app ? paramTokens(app, params) : {};
+    const pk = app ? paramKey(app, params) : '';
+    // the ) on its own line, so a template ending in a -- comment does not swallow it
+    const union = tpl => ids.map(id => `SELECT * FROM (\n${expand(tpl, { ...pt, ID: id, SITE }).trim().replace(/;\s*$/, '')}\n)`).join('\nUNION\n');
+    return {
+        // sorted, so the same areas chosen in another order share cached results
+        key: `${jur.id}:${[...ids].sort().join('+')}${pk ? '@' + pk : ''}`,
+        kind: jur.id,
+        id: null,
+        ids,
+        label: listLabel(features.map(f => f.name)),
+        params,
+        sql: union(jur.aoi),
+        sql10: jur.aoi10 ? union(jur.aoi10) : undefined,
+    };
+}
+
+/** "A", "A and B", "A, B and C". */
+export const listLabel = names => (names.length <= 1 ? String(names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 
 /** The whole-region area, or null when the app has none (app.statewide absent). */
 export function statewideAoi(app, params = {}) {
@@ -280,6 +405,9 @@ export class Engine {
         const params = aoi.params || {};
         const tokens = { ...paramTokens(app, params), AOI: aoi.sql, AOI10: aoi.sql10 ?? '' };
         if (aoi.id != null && aoi.kind && aoi.kind !== 'polygon') { tokens.ID = String(aoi.id); tokens.KIND = aoi.kind; }
+        // an area built with only an id (e.g. by an extension source) still binds {{IDS}}
+        const ids = aoi.ids ?? (aoi.id != null ? [aoi.id] : null);
+        if (ids?.length && aoi.kind && aoi.kind !== 'polygon' && aoi.kind !== 'state') { tokens.IDS = sqlList(ids); tokens.KIND = aoi.kind; }
         if (aoi.bands10) tokens.BANDS10 = aoi.bands10;
         if (aoi.origin) { tokens.ORIGIN_LAT = String(+aoi.origin.lat); tokens.ORIGIN_LON = String(+aoi.origin.lon); }
         Object.assign(tokens, aoi.tokens || {});
@@ -288,6 +416,10 @@ export class Engine {
     }
 
     sqlFor(theme, queryName, aoi) {
+        // {{ID}} names one area: say so plainly rather than "unbound token" when several are chosen
+        if (aoi.id == null && aoi.ids?.length > 1 && /\{\{ID\}\}/.test(stripComments(theme.sql[queryName]))) {
+            throw new Error('This panel shows one area at a time. Choose a single area to see it.');
+        }
         return expand(theme.sql[queryName], this.tokensFor(aoi), `${theme.id}/${theme.queries[queryName]?.file || queryName}`);
     }
 

@@ -42,9 +42,13 @@
  * base + offset, as a relative slider's stops do.
  * An area type with "picker": "map" is chosen by clicking the map only: the
  * search box gives way to labels.place_hint.
+ * A param with "multiple": true is drawn as toggle pills (any number may be on; "any" names an
+ * exclusive option, see engine.js). An area type with "multiple": true takes several areas at
+ * once: each pick adds one, shown as a removable tag, a map click toggles one, and the profile is
+ * of their union.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, toggleMulti } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -76,6 +80,7 @@ const SHELL = `
                         aria-autocomplete="list" aria-controls="place-results" aria-label="Search places">
                     <ul id="place-results" role="listbox" hidden></ul>
                 </div>
+                <div class="area-tags" id="area-tags" role="list" aria-label="Chosen areas" hidden></div>
             </div>
             <div id="source-steps"></div>
             <div class="step" id="step-params" hidden></div>
@@ -119,6 +124,7 @@ class Explorer {
             jur: null,
             themes: new Set(),
             feature: null,
+            picked: [],         // the chosen areas of an area type with "multiple": true
             aoi: null,
             features: [],
             params: {},
@@ -152,7 +158,7 @@ class Explorer {
         }
         this.engine = new Engine(config, { mcpUrl: rt?.mcp_server_url || app.mcp_url, statewide, client, dataBase, tokens: this.ext.tokens });
         this.mapView = new MapView('map', app);
-        this.mapView.onPick = id => this.pickById(id);
+        this.mapView.onPick = id => this.pickById(id, { toggle: true });
         this.installCss();
         this.installOverlays();
 
@@ -302,6 +308,9 @@ class Explorer {
             <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
                 <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
                 <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
+            </div>` : p.multiple ? `
+            <div class="chips param-multi" role="group" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
+                ${p.options.map(o => `<button type="button" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
             </div>` : `
             <div class="seg" role="radiogroup" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
@@ -310,6 +319,10 @@ class Explorer {
             ${p.help ? `<div class="step-help">${escapeHtml(p.help)}</div>` : ''}</div>`).join('');
         step.querySelectorAll('.seg[data-param] button').forEach(b => {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
+        });
+        step.querySelectorAll('.param-multi button').forEach(b => {
+            const p = app.params.find(x => x.id === b.parentElement.dataset.param);
+            b.onclick = () => this.setParam(p.id, toggleMulti(p, this.state.params[p.id], b.dataset.value));
         });
         step.querySelectorAll('.param-slider').forEach(g => {
             const p = app.params.find(x => x.id === g.dataset.param);
@@ -382,7 +395,10 @@ class Explorer {
         });
         this.$('#step-params').querySelectorAll('[data-param]').forEach(g => {
             const v = String(this.state.params[g.dataset.param]);
-            if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
+            if (g.classList.contains('param-multi')) {
+                const on = paramValues(null, this.state.params[g.dataset.param]).map(String);
+                g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(on.includes(b.dataset.value))));
+            } else if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
             else if (g.classList.contains('param-number')) this.markNumber(g, this.config.app.params.find(x => x.id === g.dataset.param));
             else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
         });
@@ -427,13 +443,14 @@ class Explorer {
             try {
                 s.features = (await this.engine.listFeatures(s.jur, s.params)).slice().sort((a, b) => naturalCompare(a.name, b.name));
                 this.$('#place-input').placeholder = `Search ${s.features.length} ${s.jur.label.toLowerCase()}…`;
+                this.renderTags();
             } catch (err) { console.error(err); }
         }
         if (s.view === 'leaderboard' && this.lb) this.lb.load(s.params, this.paramNote());
         const a = this.state.aoi;
         if (!a) { this.writeHash(); return; }
         if (a.kind === 'state') this.setAoi(statewideAoi(this.config.app, this.state.params));
-        else if (this.state.jur && this.state.feature) this.setAoi(jurisdictionAoi(this.state.jur, this.state.feature, this.config.app, this.state.params));
+        else if (this.state.jur && this.chosen().length) this.setAoi(this.areaAoi());
         else this.setAoi({ ...a, key: `${a.key.split('@')[0]}@${paramKey(this.config.app, this.state.params)}`, params: this.state.params });
     }
 
@@ -460,6 +477,7 @@ class Explorer {
         this.$('#step-place').hidden = !jur;
         const byMap = jur?.picker === 'map';
         this.$('#step-place .search').hidden = byMap;
+        this.renderTags();
         let hint = this.$('#step-place .pick-hint');
         if (byMap && !hint) {
             hint = document.createElement('div');
@@ -477,7 +495,7 @@ class Explorer {
         if (prevSource && prevSource.id !== id) prevSource.deactivate();
         if (id === null) { this.markMode(null); this.renderIntro(); return; }
         if (id === 'state') {
-            s.mode = 'state'; s.jur = null; s.feature = null;
+            s.mode = 'state'; s.jur = null; s.feature = null; s.picked = [];
             this.markMode('state');
             this.hideHint();
             this.mapView.clearJurisdiction();
@@ -487,7 +505,7 @@ class Explorer {
         }
         const source = this.ext.sources.find(x => x.id === id);
         if (source) {
-            s.mode = id; s.jur = null; s.feature = null;
+            s.mode = id; s.jur = null; s.feature = null; s.picked = [];
             this.markMode(id);
             this.mapView.clearJurisdiction();
             source.activate({ restoring: restoring || keepFeature });
@@ -507,6 +525,8 @@ class Explorer {
         input.placeholder = `Loading ${jur.label.toLowerCase()}…`;
         if (!keepFeature) {
             s.feature = null;
+            s.picked = [];
+            this.renderTags();
             this.setAoi(null);
         }
         await this.mapView.showJurisdiction(jur, paramTokens(this.config.app, s.params));
@@ -517,6 +537,7 @@ class Explorer {
             s.features = (await this.engine.listFeatures(jur, s.params)).slice();
             s.features.sort((a, b) => naturalCompare(a.name, b.name));
             input.placeholder = `Search ${s.features.length} ${jur.label.toLowerCase()}…`;
+            this.renderTags();
         } catch (err) {
             input.placeholder = 'Could not load list — click the map instead';
             console.error(err);
@@ -550,7 +571,10 @@ class Explorer {
         const close = () => { list.hidden = true; active = -1; };
         const render = () => {
             const q = browsing ? '' : input.value.trim().toLowerCase();
-            matches = (q ? this.state.features.filter(f => String(f.name).toLowerCase().includes(q)) : this.state.features).slice(0, 200);
+            // several areas at once: the list offers the ones not yet chosen
+            const taken = this.state.jur?.multiple ? new Set(this.state.picked.map(f => String(f.id))) : null;
+            const pool = taken?.size ? this.state.features.filter(f => !taken.has(String(f.id))) : this.state.features;
+            matches = (q ? pool.filter(f => String(f.name).toLowerCase().includes(q)) : pool).slice(0, 200);
             list.innerHTML = matches.map((f, i) =>
                 `<li role="option" data-i="${i}" aria-selected="${i === active}">${escapeHtml(f.name)}${f.detail ? `<small>${escapeHtml(f.detail)}</small>` : ''}</li>`).join('');
             list.hidden = !matches.length;
@@ -581,15 +605,40 @@ class Explorer {
         input.addEventListener('blur', () => setTimeout(close, 150));
     }
 
-    pickById(id) {
+    /** The pick-list feature with this id (matched by value: a numeric id in the tiles, 20001.0, finds "20001"), or a stand-in. */
+    featureById(id) {
         const s = this.state;
-        if (!s.jur) return;
-        // ids match by value: a numeric id in the tiles (e.g. 20001.0) finds "20001" in the list
         const f = s.features.find(x => String(x.id) === String(id) || (Number.isFinite(Number(id)) && Number(x.id) === Number(id)));
-        this.pick(f || { id, name: `${s.jur.singular || s.jur.label} ${id}` });
+        return f || { id, name: `${s.jur.singular || s.jur.label} ${id}` };
     }
 
-    pick(feature) {
+    /** toggle (a map click): on an area type with "multiple", a chosen area is removed rather than chosen again. */
+    pickById(id, { toggle = false } = {}) {
+        const s = this.state;
+        if (!s.jur) return;
+        const f = this.featureById(id);
+        if (toggle && s.jur.multiple && s.view === 'profile' && s.picked.some(x => sameId(x.id, f.id))) { this.unpick(f.id); return; }
+        this.pick(f);
+    }
+
+    /**
+     * The areas a link names (an area type with "multiple"): they replace the
+     * chosen ones, so a link to one area chooses that area alone.
+     */
+    pickMany(ids) {
+        const s = this.state;
+        if (!s.jur) return;
+        if (!s.jur.multiple) { if (ids.length) this.pickById(ids[0]); return; }
+        s.picked = [];
+        for (const id of ids) { const f = this.featureById(id); if (!s.picked.some(x => sameId(x.id, f.id))) s.picked.push(f); }
+        this.applyPicked();
+    }
+
+    /**
+     * Choose an area. On an area type with "multiple" it is added to those
+     * already chosen, unless `replace` (a leaderboard row, the assistant).
+     */
+    pick(feature, { replace = false } = {}) {
         const s = this.state;
         if (!feature || !s.jur) return;
         if (s.view === 'leaderboard' && this.lb) {
@@ -599,6 +648,12 @@ class Explorer {
             return;
         }
         if (this.customView()) this.setView('profile');
+        if (s.jur.multiple) {
+            if (replace) s.picked = [feature];
+            else if (!s.picked.some(x => sameId(x.id, feature.id))) s.picked = [...s.picked, feature];
+            this.applyPicked();
+            return;
+        }
         s.feature = feature;
         this.$('#place-input').value = feature.name;
         this.syncPickHint();
@@ -606,6 +661,59 @@ class Explorer {
         const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(feature[k]));
         this.mapView.select(feature.id, bbox);
         this.setAoi(jurisdictionAoi(s.jur, feature, this.config.app, s.params));
+    }
+
+    /** Remove one of several chosen areas (its tag's ×, or a map click on it). */
+    unpick(id) {
+        const s = this.state;
+        s.picked = s.picked.filter(x => !sameId(x.id, id));
+        this.applyPicked();
+    }
+
+    /** The chosen areas: s.picked on an area type with "multiple", else the one feature. */
+    chosen() {
+        const s = this.state;
+        return s.jur?.multiple ? s.picked : s.feature ? [s.feature] : [];
+    }
+
+    /** The AOI of the chosen area or areas. */
+    areaAoi() {
+        const s = this.state;
+        return jurisdictionAoi(s.jur, s.jur.multiple ? s.picked : s.feature, this.config.app, s.params);
+    }
+
+    /** After the chosen areas of a "multiple" area type change: tags, outline, view and profile. */
+    applyPicked() {
+        const s = this.state;
+        s.feature = s.picked.length === 1 ? s.picked[0] : null;
+        this.$('#place-input').value = '';
+        this.renderTags();
+        this.syncPickHint();
+        if (!s.picked.length) {
+            this.mapView.clearSelection();
+            this.setAoi(null);
+            return;
+        }
+        this.hideHint();
+        // fit to every chosen area, so the view shows all that the profile covers
+        const boxes = s.picked.map(f => ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k])));
+        this.mapView.select(s.picked.map(f => f.id), unionBbox(boxes));
+        this.setAoi(this.areaAoi());
+    }
+
+    /** Removable tags for the chosen areas of an area type with "multiple". */
+    renderTags() {
+        const box = this.$('#area-tags');
+        const s = this.state;
+        const multi = !!s.jur?.multiple && s.mode === s.jur.id && s.view !== 'leaderboard';
+        box.hidden = !multi || !s.picked.length;
+        const input = this.$('#place-input');
+        if (multi && s.features.length) {
+            input.placeholder = s.picked.length ? `Add another ${(s.jur.singular || s.jur.label).toLowerCase()}…` : `Search ${s.features.length} ${s.jur.label.toLowerCase()}…`;
+        }
+        if (!multi) { box.innerHTML = ''; return; }
+        box.innerHTML = s.picked.map(f => `<span class="area-tag" role="listitem">${escapeHtml(f.name)}<button type="button" data-id="${escapeHtml(f.id)}" aria-label="Remove ${escapeHtml(f.name)}" title="Remove">×</button></span>`).join('');
+        box.querySelectorAll('button').forEach(b => { b.onclick = () => this.unpick(b.dataset.id); });
     }
 
     /* ------------------------------------------------------------- report */
@@ -625,6 +733,8 @@ class Explorer {
         if (!h) return;
         const f = this.state.feature;
         const text = this.config.app.labels?.place_hint || 'Click the map to choose an area';
+        // several areas: the tags name them; the hint says how to add or remove one
+        if (this.state.jur?.multiple) { h.textContent = this.state.picked.length ? `${text} to add another, or click a chosen one to remove it` : text; return; }
         h.innerHTML = f ? `<b>${escapeHtml(f.name)}</b> · ${escapeHtml(text)} to choose another` : escapeHtml(text);
     }
 
@@ -733,7 +843,7 @@ class Explorer {
                         const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k]));
                         this.mapView.select(f.id, bbox);
                     },
-                    onOpen: f => { this.setView('profile').then(() => this.pick(f)); },
+                    onOpen: f => { this.setView('profile').then(() => this.pick(f, { replace: true })); },
                     onHover: id => this.mapView.highlight(id),
                     onScores: res => this.colorByScore(res),
                     onChange: () => this.writeHash(),
@@ -748,7 +858,9 @@ class Explorer {
         } else {
             this.mapView.setJurisdictionColors(null);
             this.$('#map-legend').hidden = true;
-            if (s.feature) this.mapView.select(s.feature.id); else this.mapView.clearSelection();
+            const ids = this.chosen().map(f => f.id);
+            if (ids.length) this.mapView.select(s.jur?.multiple ? ids : ids[0]); else this.mapView.clearSelection();
+            this.renderTags();
             if (s.aoi) this.renderReport(); else this.renderIntro();
         }
         this.writeHash();
@@ -757,7 +869,9 @@ class Explorer {
     paramNote() {
         const app = this.config.app;
         return app.params.filter(p => paramActive(p, app, this.state.params)).map(p => {
-            const o = p.options.find(x => String(optionValue(x)) === String(this.state.params[p.id]));
+            const v = this.state.params[p.id];
+            if (p.multiple) return `${p.label || p.id}: ${paramValueLabel(p, v)}`;
+            const o = p.options.find(x => String(optionValue(x)) === String(v));
             return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
         }).filter(Boolean).join(' · ');
     }
@@ -777,7 +891,7 @@ class Explorer {
     kindLabel() {
         const s = this.state;
         if (s.mode === 'state') return this.config.app.statewide.kind_label || 'Whole region';
-        if (s.jur) return s.jur.singular || s.jur.label;
+        if (s.jur) return s.jur.multiple && s.picked.length > 1 ? s.jur.label : s.jur.singular || s.jur.label;
         return s.aoi?.kindLabel || this.ext.sources.find(x => x.id === s.mode)?.kindLabel || 'Area';
     }
 
@@ -787,7 +901,9 @@ class Explorer {
         const what = (this.state.jur?.singular || 'place').toLowerCase();
         r.innerHTML = app.intro
             ? `<div class="intro">${app.intro}</div>`
-            : `<div class="intro"><p>Choose a ${escapeHtml(what)} by name or on the map.</p></div>`;
+            : this.state.jur?.multiple
+                ? `<div class="intro"><p>Choose one or more ${escapeHtml(this.state.jur.label.toLowerCase())} by name or on the map.</p></div>`
+                : `<div class="intro"><p>Choose a ${escapeHtml(what)} by name or on the map.</p></div>`;
         this.syncMapChips();
     }
 
@@ -798,10 +914,7 @@ class Explorer {
         const app = this.config.app;
         const r = this.$('#report');
         const isRegion = aoi.kind === 'state';
-        const paramNote = app.params.filter(p => paramActive(p, app, s.params)).map(p => {
-            const o = p.options.find(x => String(optionValue(x)) === String(s.params[p.id]));
-            return o === undefined ? '' : `${p.label || p.id}: ${optionLabel(p, o)}`;
-        }).filter(Boolean).join(' · ');
+        const paramNote = this.paramNote();
         r.innerHTML = `
             <div class="report-head">
                 <div>
@@ -949,14 +1062,16 @@ class Explorer {
         const source = this.activeSource();
         // an app's only area mode, when it is a source, is left out of the link
         if (s.mode && s.mode !== 'state' && !(source && source === this.soleSource())) parts.push(s.mode);
-        if (s.jur && s.feature) parts.push(encodeURIComponent(s.feature.id));
+        // several areas: their ids, comma-separated (#county/06001,06013)
+        if (s.jur && this.chosen().length) parts.push(this.chosen().map(f => encodeURIComponent(f.id)).join(','));
         const q = new URLSearchParams();
         const sh = source?.hashState?.();
         if (sh?.path) parts.push(sh.path);
         for (const [k, v] of Object.entries(sh?.query || {})) q.set(k, v);
         if (s.themes.size !== this.config.themes.length) q.set('themes', this.orderedThemes().map(t => t.id).join(','));
         if (s.mapTheme && this.config.themes.some(t => t.map)) q.set('map', s.mapTheme);
-        for (const p of app.params) if (String(s.params[p.id]) !== String(p.default ?? optionValue(p.options[0]))) q.set(p.id, s.params[p.id]);
+        // a "multiple" param's list is comma-separated (?ptype=Acquisition,Restoration)
+        for (const p of app.params) if (String(s.params[p.id]) !== String(paramDefault(p))) q.set(p.id, paramValues(p, s.params[p.id]).join(','));
         if (s.view !== 'profile') q.set('view', s.view);
         const lbs = this.lb?.stateString();
         if (lbs) q.set('score', lbs);
@@ -1000,7 +1115,11 @@ class Explorer {
         if (!modeId || (source && source.hashable === false)) { await this.landing(); if (page) await this.setView(page); return true; }
         if (!this.modes().some(m => m.id === modeId)) { await this.setMode(this.defaultMode()); return true; }
         await this.setMode(modeId, { keepFeature: !!featId });
-        if (featId) this.pickById(decodeURIComponent(featId));
+        if (featId) {
+            const jur = this.config.app.jurisdictions.find(j => j.id === modeId);
+            if (jur?.multiple) this.pickMany(featId.split(',').filter(Boolean).map(decodeURIComponent));
+            else this.pickById(decodeURIComponent(featId));
+        }
         if (page) await this.setView(page);
         if (this.config.app.leaderboard && (q.get('view') === 'leaderboard' || q.has('score'))) {
             if (q.get('view') === 'leaderboard') await this.setView('leaderboard', { lbState: q.get('score') || '' });
@@ -1056,6 +1175,20 @@ function sourcesHtml(sources) {
 }
 
 const naturalCompare = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true });
+
+/** Ids compared by value, as pickById matches them ("20001" and 20001.0). */
+const sameId = (a, b) => String(a) === String(b) || (Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Number(a) === Number(b));
+
+/**
+ * The box around several [xmin, ymin, xmax, ymax] boxes; one that crosses the
+ * antimeridian (xmin > xmax) is returned alone, and an incomplete one is skipped.
+ */
+function unionBbox(boxes) {
+    const ok = boxes.filter(b => b.every(Number.isFinite));
+    if (!ok.length) return null;
+    if (ok.length === 1 || ok.some(b => b[0] > b[2])) return ok[ok.length - 1];
+    return [Math.min(...ok.map(b => b[0])), Math.min(...ok.map(b => b[1])), Math.max(...ok.map(b => b[2])), Math.max(...ok.map(b => b[3]))];
+}
 
 /** The base a number box's value is offset from: the area's value for a relative param, else 0. */
 function numberBase(g) {

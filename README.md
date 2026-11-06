@@ -4,7 +4,7 @@ A library for small, static web apps that profile an area: pick a place, or a wh
 
 An app is configuration: `config/app.json`, one folder per theme with its SQL, and precomputed `data/`. The library supplies the page layout, the map, the query engine (MCP server or DuckDB-wasm in the browser), the charts, the report export with runnable code and data citations, and a precompute CLI.
 
-Status: **0.11.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
+Status: **0.12.0**. Extracted from [tpl-cities](https://github.com/boettiger-lab/tpl-cities) and the [ca-30x30 Assessment Explorer](https://github.com/boettiger-lab/ca-30x30/tree/main/assessment). Both run on it; see [DESIGN.md](DESIGN.md) for the plan. `example/` is a complete minimal app.
 
 ## An app in four files
 
@@ -79,6 +79,7 @@ An area type:
 - The boundary `url` and `source_layer` may contain param tokens too, for areas with one tile set per param value (`".../level_0{{LEVEL}}.pmtiles"`); the boundaries reload when the param changes, keeping the selection and leaderboard colours.
 - `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
 - `picker: "map"` chooses areas by clicking the map only: the search box gives way to `labels.place_hint` (e.g. "Click a coastline on the map").
+- `multiple: true` lets the reader choose several areas of the type at once. Each pick from the list adds one, shown as a removable tag under the search box. A map click adds an area, or removes it if it is already chosen. The chosen areas are outlined together, the map fits to all of them, and the profile covers their union: `{{AOI}}` and `{{AOI10}}` are the `UNION` of each area's `aoi`/`aoi10`. The title lists the names, and the link holds the ids, comma-separated (`#county/06001,06013`). With several areas `{{ID}}` is unbound (and no precomputed single-area rows apply); use `{{IDS}}`, the ids as a quoted SQL list bound for one area or several, as in `GEOID IN ({{IDS}})`. Extension code reads them as `aoi.ids`. With one area chosen, everything is as without `multiple`. Opening a leaderboard row chooses that area alone, and so does the assistant's `select_area` unless it passes `add: true`. A chosen area stays chosen when a setting change leaves it out of the list.
 
 ### Params
 
@@ -123,6 +124,22 @@ A param may carry `when` too, which makes it a drill-down: its control shows onl
 
 The keys are then `manager-state`, `agency-all_manager-federal` and `agency-usfs_manager-federal`.
 
+With `"multiple": true` the reader may choose several options at once. The param is drawn as toggle pills, each chosen one highlighted, and its value is a list of options in option order:
+
+```json
+{ "id": "ptype", "label": "Project type", "token": "PTYPE", "multiple": true, "any": "Any", "default": "Any",
+  "options": ["Any", "Acquisition", "Easement", "Restoration"] }
+```
+
+- The token is a SQL list: `'Acquisition', 'Restoration'`, with quotes doubled inside values, or bare numbers when every option is a number. Use it as `x IN ({{PTYPE}})` or `list_has_any(types, [{{PTYPE}}])`. Extension tokens get the list as `params.ptype`.
+- `any` names an option that stands for all of them. It is exclusive: choosing it clears the others, and choosing another clears it. Clearing the last other pill falls back to it. Without `any`, the last pill cannot be cleared. Test it in SQL as `'Any' IN ({{PTYPE}}) OR ...`.
+- `default` may be one value or a list.
+- Option values may not contain a comma: the link and `set_param` separate values with commas A warning is logged when the config loads if one does.
+- The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `~` (`ptype-Acquisition~Restoration`; not `+`, which some servers, S3 among them, read as a space in a path). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
+- A `when` that names a multiple param matches only when every chosen value is one it names.
+- `precompute --param ptype=all` runs each option on its own, not every combination. `--param ptype=a,b` runs that one list. Other choices run live.
+- `multiple` uses pills only, not `control: "slider"` or `"number"`.
+
 ## Themes
 
 `config/themes/<id>/theme.json`:
@@ -143,7 +160,7 @@ A headline's `area_template` names the area under the value, with `{}` the area'
 
 When `app.tracts` lists several grids, `map.levels` names the query for each grid by its id (`{ "h6": "map_h6", "h7": "map" }`; a grid not named uses `map.query`). Each grid's rows carry that grid's `id_prop` column, and fixed `breaks` keep the colours the same across grids (quantile breaks come from the first grid).
 
-Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
+Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{AOI10}}` (res-10 cells), `{{ID}}` and `{{KIND}}` for a named area (not for the whole region or a drawn polygon; `{{ID}}` not for several areas together), `{{IDS}}` (the named area's ids as a quoted SQL list), every param token, and any token the app registers. Tokens inside `--` comments are left as written. An unbound token is reported with the template's name; it never hides precomputed rows, because SQL is only expanded when it has to run. A query's optional `all` file computes the same rows for **every** area of a type at once, with an `id` column; the precompute CLI writes its results and the browser then serves each area from that file, and `percentile-strip` reads it as the distribution. Tokens in an `all` file: params, `{{KIND}}`, and `{{CELLS10}}` when the area type defines `cells10`.
 
 **Formats:** `int`, `num`, `num1`, `num2`, `compact`, `pct` (0–1), `pct100`, `usd`, `acres`, `km2`, `ha`, `meters`, `degC`, `tempC`, `per1k`, `ordinal`, `text`. A NULL or NaN shows as `format.nodata`; bar charts leave it out rather than drawing zero.
 
