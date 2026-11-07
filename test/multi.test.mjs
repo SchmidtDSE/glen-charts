@@ -153,3 +153,21 @@ test('a panel that needs {{ID}} says it shows one area when several are chosen',
     const commented = { ...theme, sql: { q: 'SELECT 1 -- per {{ID}}' } };
     assert.equal(e.sqlFor(commented, 'q', many), 'SELECT 1 -- per {{ID}}');
 });
+
+test('multiLabel names a choice in a few words', async () => {
+    const { multiLabel } = await import('../core/engine.js');
+    const funder = {
+        id: 'funder', multiple: true, any: 'all',
+        options: [{ value: 'all', label: 'All funders' },
+            { value: 'wcb', label: 'WCB', group: 'State' }, { value: 'scc', label: 'SCC', group: 'State' }, { value: 'dwr', label: 'DWR', group: 'State' },
+            { value: 'nps', label: 'NPS', group: 'Federal' }, { value: 'usfs', label: 'Forest Service', group: 'Federal' }],
+    };
+    assert.equal(multiLabel(funder, ['all']), 'All funders');
+    assert.equal(multiLabel(funder, ['wcb']), 'WCB');
+    assert.equal(multiLabel(funder, ['wcb', 'dwr']), 'WCB, DWR');
+    assert.equal(multiLabel(funder, ['wcb', 'scc', 'dwr']), 'State (3)');
+    assert.equal(multiLabel(funder, ['wcb', 'scc', 'dwr', 'nps']), 'State (3), NPS');
+    assert.equal(multiLabel(funder, ['wcb', 'dwr', 'nps']), 'WCB +2');
+    assert.equal(multiLabel(funder, ['nps', 'usfs', 'wcb']), 'WCB, Federal (2)');
+    assert.equal(multiLabel(ptype, ['Acquisition', 'Planning/Design']), 'Acquisition, Planning');
+});
