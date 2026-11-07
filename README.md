@@ -36,7 +36,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 
 | Field | Meaning |
 |---|---|
-| `id` | short key for the reader's saved settings (sidebar width, code language) |
+| `id` | short key for the reader's saved settings (sidebar width, settings height, code language) |
 | `title`, `intro` | page title; HTML shown before an area is chosen |
 | `mcp_url` | the duckdb-geo MCP server. A `config.json` next to the page with `mcp_server_url` overrides it at run time |
 | `engine` / `wasm` | `"mcp"` (default) or `"wasm"`; `wasm` holds the DuckDB-wasm options (see `core/wasm.js`) |
@@ -48,6 +48,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `params` | user-chosen settings that enter the SQL; see below |
 | `reference` | optional published source to compare with on the region's own view: `{ values: "data/report.json", label, chart_label?, title?, citation?, url?, note? }` |
 | `labels` | `{ area, sections, place_hint, map_chips }` step titles |
+| `controls` | `{ collapse }`: whether the settings fold into one summary line once an area is chosen; see [The settings panel](#the-settings-panel) |
 | `format` | `{ nodata: "—", pct_decimals: "auto" | 1 }` |
 | `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }` |
 | `tracts` | `{ url, source_layer, id_prop, line_width? }` for themes that color tracts (`theme.map`). `line_width` is the cell outline width, a number or a MapLibre expression (default 0.4); use a zoom expression for cells only a pixel or two wide at the landing zoom. A list of grids, each with an `id` and a `minzoom` and/or `maxzoom`, swaps grids by zoom, e.g. a coarse H3 grid zoomed out and a fine one zoomed in; see `theme.map.levels` |
@@ -124,7 +125,7 @@ A param may carry `when` too, which makes it a drill-down: its control shows onl
 
 The keys are then `manager-state`, `agency-all_manager-federal` and `agency-usfs_manager-federal`.
 
-With `"multiple": true` the reader may choose several options at once. The param is drawn as toggle pills, each chosen one highlighted, and its value is a list of options in option order:
+With `"multiple": true` the reader may choose several options at once. The param is drawn as toggle pills, each chosen one highlighted, or as a menu when it has more than 8 options (see below). Its value is a list of options in option order:
 
 ```json
 { "id": "ptype", "label": "Project type", "token": "PTYPE", "multiple": true, "any": "Any", "default": "Any",
@@ -139,7 +140,8 @@ With `"multiple": true` the reader may choose several options at once. The param
 - The link holds the list comma-separated (`?ptype=Acquisition,Restoration`), and the file and cache key joins it with `~` (`ptype-Acquisition~Restoration`; not `+`, which some servers, S3 among them, read as a space in a path). The report's settings line, the export and the assistant's `set_param` (comma-separated values) take lists too.
 - A `when` that names a multiple param matches only when every chosen value is one it names.
 - `precompute --param ptype=all` runs each option on its own, not every combination. `--param ptype=a,b` runs that one list. Other choices run live.
-- `multiple` uses pills only, not `control: "slider"` or `"number"`.
+- Past 8 options the param is drawn as a menu: a button naming the choice ("All funders", "WCB, DWR", "State (19)" for a whole group, "WCB +2" past two names) over a checklist with a heading for each group, which chooses the group and shows how many of it are chosen. Past 12 options the checklist has a filter box, which matches option labels and group names. `"control": "menu"` draws a menu at any size, and `"control": "pills"` keeps pills at any size.
+- `multiple` does not combine with `control: "slider"` or `"number"`.
 
 With `"control": "range"` the value is two of the options, which are ordered stops, drawn as a slider with two handles. It binds `{{<TOKEN>_MIN}}` and `{{<TOKEN>_MAX}}`, or the two names in `"tokens"`:
 
@@ -156,6 +158,20 @@ WHERE year BETWEEN {{YEAR_MIN}} AND {{YEAR_MAX}}
 - The link holds `?years=2000,2020`, and the file and cache key `years-2000~2020`. The settings line shows "Years: 2000 – 2020", or `all_label` for the full span. The assistant's `set_param` takes `2000,2020`.
 - Clicking a stop moves the nearer handle.
 - `precompute --param years=all` runs every span (low ≤ high); `--param years=2000,2020` runs one.
+
+### The settings panel
+
+The settings (area type, area, params and sections) sit above the report in a box at most 40% of the sidebar tall, and scroll inside it. The bar under the box drags its height (arrow keys move it too, and a double-click resets it); the height is kept for the reader under the app's `id`. A pick list under a search box floats over the sidebar, so the box does not clip it.
+
+Once an area is chosen, the settings can fold into one line that names the area and each setting ("Assembly District 5 · All funders · All years"), with an Edit button that opens them again; the Hide settings tab on the bar folds them. `app.controls.collapse` sets when they fold by themselves on the first area chosen (from the list, the map or a link, but not the whole region):
+
+- `"auto"` (the default): only when the settings overflow their box, as on a phone or with many params.
+- `true`: always.
+- `false`: never, and the Hide settings tab is not shown.
+
+```json
+"controls": { "collapse": true }
+```
 
 ## Themes
 
@@ -323,7 +339,7 @@ An app whose only area mode is a source opens on it, and leaves the mode out of 
 ## Precompute
 
 ```
-npx github:SchmidtDSE/glen-charts#v0.13.0 precompute --site <app dir> <job> [args] [flags]
+npx github:SchmidtDSE/glen-charts#v0.14.0 precompute --site <app dir> <job> [args] [flags]
 ```
 
 | Job | Writes |

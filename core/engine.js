@@ -293,6 +293,28 @@ export function paramValueLabel(p, value) {
 }
 
 /**
+ * A short name for a "multiple" param's choice: the "any" option's label, a wholly
+ * chosen group as "State (19)", and past two names the first and a count ("WCB +2").
+ */
+export function multiLabel(p, value) {
+    const on = new Set(paramValues(p, value).map(String));
+    const byValue = v => p.options.find(o => String(optionValue(o)) === v);
+    if (p.any !== undefined && on.has(String(p.any))) return optionLabel(p, byValue(String(p.any)) ?? p.any);
+    // in option order; a wholly chosen group in place of its first member
+    const parts = [], seen = new Set();
+    const whole = g => { const ms = p.options.filter(o => o?.group === g); return ms.length > 1 && ms.every(o => on.has(String(optionValue(o)))); };
+    for (const o of p.options) {
+        if (!on.has(String(optionValue(o)))) continue;
+        if (o?.group && whole(o.group)) {
+            if (!seen.has(o.group)) parts.push(`${o.group} (${p.options.filter(x => x?.group === o.group).length})`);
+            seen.add(o.group);
+        } else parts.push(optionLabel(p, o));
+    }
+    const all = parts.join(', ');
+    return parts.length <= 2 && all.length <= 30 ? all : `${parts[0]} +${parts.length - 1}`;
+}
+
+/**
  * The option nearest to a typed number, so a number box still sets one of the param's options
  * (and so stays safe in SQL). A value past either end is held to that end.
  */

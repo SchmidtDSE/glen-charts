@@ -49,7 +49,7 @@
  * of their union.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, toggleMulti, toggleGroup, rangeValue } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, multiLabel, toggleMulti, toggleGroup, rangeValue } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -68,6 +68,10 @@ const SHELL = `
     </section>
     <aside id="sidebar">
         <div class="sidebar-resize" title="Drag to resize"></div>
+        <div id="controls-summary" hidden>
+            <div class="cs-text"></div>
+            <button type="button" class="ghost-btn cs-edit" aria-controls="controls" aria-expanded="false">Edit</button>
+        </div>
         <section id="controls">
             <div class="step" id="step-jur">
                 <div class="step-label"><span class="step-num">1</span> <span data-label="area">Area</span></div>
@@ -90,6 +94,11 @@ const SHELL = `
                 <div class="chips" id="theme-buttons" role="group" aria-label="Sections"></div>
             </div>
         </section>
+        <div class="controls-bar">
+            <div class="controls-resize" role="separator" aria-orientation="horizontal" aria-controls="controls"
+                aria-label="Resize settings" tabindex="0" title="Drag to resize the settings; double-click to reset"></div>
+            <button type="button" class="cs-done" aria-controls="controls" hidden>Hide settings</button>
+        </div>
         <section id="report" aria-live="polite"></section>
     </aside>`;
 
@@ -173,6 +182,9 @@ class Explorer {
         this.renderViewTabs();
         this.wireSearch();
         this.wireResize();
+        this.wireControlsResize();
+        this.wireCollapse();
+        this.wireFloatingLists();
         if (app.chat) this.mountChat();
         if (!(await this.restoreFromHash())) await this.landing();
         // a link pasted into an open tab (writeHash uses replaceState, which fires no event)
@@ -309,7 +321,7 @@ class Explorer {
             <div class="param-slider" data-param="${escapeHtml(p.id)}" style="--n:${p.options.length}">
                 <input type="range" min="0" max="${p.options.length - 1}" step="1" value="0" aria-label="${escapeHtml(p.label || p.id)}">
                 <div class="param-stops">${p.options.map((o, i) => `<button type="button" data-i="${i}" data-value="${escapeHtml(optionValue(o))}" aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}</div>
-            </div>` : p.control === 'range' ? rangeControl(p) : p.multiple ? multiPills(p) : `
+            </div>` : p.control === 'range' ? rangeControl(p) : p.multiple ? (useMenu(p) ? multiMenu(p) : multiPills(p)) : `
             <div class="seg" role="radiogroup" data-param="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.label || p.id)}">
                 ${p.options.map(o => `<button type="button" role="radio" data-value="${escapeHtml(optionValue(o))}" aria-checked="false">${escapeHtml(optionLabel(p, o))}</button>`).join('')}
             </div>`}
@@ -318,12 +330,13 @@ class Explorer {
         step.querySelectorAll('.seg[data-param] button').forEach(b => {
             b.onclick = () => this.setParam(b.parentElement.dataset.param, b.dataset.value);
         });
-        step.querySelectorAll('.param-multi button').forEach(b => {
+        step.querySelectorAll('.param-multi button[data-value], .param-multi button[data-group]').forEach(b => {
             const p = app.params.find(x => x.id === b.closest('[data-param]').dataset.param);
             b.onclick = () => this.setParam(p.id, b.dataset.group !== undefined
                 ? toggleGroup(p, this.state.params[p.id], b.dataset.group)
                 : toggleMulti(p, this.state.params[p.id], b.dataset.value));
         });
+        step.querySelectorAll('.param-menu').forEach(g => wireMenu(g));
         step.querySelectorAll('.param-span').forEach(g => this.wireRange(g, app.params.find(x => x.id === g.dataset.param)));
         step.querySelectorAll('.param-slider').forEach(g => {
             const p = app.params.find(x => x.id === g.dataset.param);
@@ -399,11 +412,16 @@ class Explorer {
             if (g.classList.contains('param-multi')) {
                 const on = paramValues(null, this.state.params[g.dataset.param]).map(String);
                 g.querySelectorAll('button[data-value]').forEach(b => b.setAttribute('aria-pressed', String(on.includes(b.dataset.value))));
-                // a group heading is on when its whole group is chosen
+                // a group heading is on when its whole group is chosen, "mixed" when part of it is
                 g.querySelectorAll('button[data-group]').forEach(h => {
                     const ms = [...g.querySelectorAll(`button[data-in="${CSS.escape(h.dataset.group)}"]`)];
-                    h.setAttribute('aria-pressed', String(ms.length > 0 && ms.every(b => on.includes(b.dataset.value))));
+                    const n = ms.filter(b => on.includes(b.dataset.value)).length;
+                    h.setAttribute('aria-pressed', n && n === ms.length ? 'true' : n ? 'mixed' : 'false');
+                    const c = h.parentElement.querySelector('.group-count');
+                    if (c) c.textContent = n ? `${n} of ${ms.length}` : String(ms.length);
                 });
+                const label = g.querySelector('.menu-label');
+                if (label) label.textContent = multiLabel(this.config.app.params.find(x => x.id === g.dataset.param), this.state.params[g.dataset.param]);
             } else if (g.classList.contains('param-span')) this.markRange(g, this.config.app.params.find(x => x.id === g.dataset.param), this.state.params[g.dataset.param], true); else if (g.classList.contains('param-slider')) this.markSlider(g, v, true);
             else if (g.classList.contains('param-number')) this.markNumber(g, this.config.app.params.find(x => x.id === g.dataset.param));
             else g.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.value === v)));
@@ -481,6 +499,7 @@ class Explorer {
         const s = this.state;
         s.params = resolveParams(this.config.app, { ...s.params, [id]: value });
         this.markParams();
+        this.renderSummary();
         this.mapView.setBoundaryTokens(paramTokens(this.config.app, s.params));
         if (s.jur?.list_params) {
             // the pick list depends on the param: areas can appear or drop out
@@ -763,8 +782,13 @@ class Explorer {
     /* ------------------------------------------------------------- report */
 
     setAoi(aoi) {
+        const had = !!this.state.aoi;
         this.state.aoi = aoi;
         this.state.token++;
+        // the first area chosen folds the settings away; none chosen opens them again
+        if (aoi && !had && aoi.kind !== 'state') this.autoCollapse();
+        else if (!aoi) this.setCollapsed(false);
+        this.renderSummary();
         this.writeHash();
         if (this.state.view !== 'profile') return;
         if (aoi) this.renderReport();
@@ -809,7 +833,7 @@ class Explorer {
         nav.setAttribute('role', 'tablist');
         nav.innerHTML = views.map(v => `<button type="button" role="tab" data-view="${escapeHtml(v.id)}">${escapeHtml(v.label)}</button>`).join('');
         nav.querySelectorAll('button').forEach(b => { b.onclick = () => this.setView(b.dataset.view); });
-        this.$('#controls').before(nav);
+        this.$('#controls-summary').before(nav);
         this.markView();
     }
 
@@ -817,7 +841,7 @@ class Explorer {
         const v = this.state.view;
         this.el.querySelectorAll('.view-tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === v)));
         const custom = this.customView();
-        this.$('#controls').hidden = !!custom;
+        this.syncCollapsed();
         const full = !!custom?.full;
         if (this.el.classList.contains('glen-full') !== full) {
             this.el.classList.toggle('glen-full', full);
@@ -1197,6 +1221,189 @@ class Explorer {
             handle.addEventListener('pointerup', up, { once: true });
         });
     }
+
+    /* ------------------------------------------------------------ settings */
+
+    /**
+     * The settings (#controls) sit above the report in a box no taller than
+     * --controls-max (40% of the sidebar by default) and scroll inside it. The
+     * divider under them drags that cap (arrow keys move it too, a double-click
+     * resets it), and the reader's choice is kept for the app.
+     */
+    wireControlsResize() {
+        const bar = this.$('.controls-resize'), sidebar = this.$('#sidebar'), controls = this.$('#controls');
+        const key = `${this.config.app.id || 'glen'}-controls-frac`;
+        const apply = f => {
+            if (f) sidebar.style.setProperty('--controls-max', `${(f * 100).toFixed(1)}%`);
+            else sidebar.style.removeProperty('--controls-max');
+        };
+        const save = f => { try { if (f) localStorage.setItem(key, String(f)); else localStorage.removeItem(key); } catch { /* storage unavailable */ } };
+        // the cap as a share of the sidebar, leaving each side room
+        const frac = px => {
+            const h = sidebar.clientHeight || 1;
+            return Math.max(60, Math.min(h - 120, px)) / h;
+        };
+        try {
+            const f = Number(localStorage.getItem(key));
+            if (f > 0.05 && f < 0.95) apply(f);
+        } catch { /* storage unavailable */ }
+        bar.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            bar.setPointerCapture(e.pointerId);
+            const y0 = e.clientY, h0 = controls.getBoundingClientRect().height;
+            let f = null;
+            const move = ev => { f = frac(h0 + ev.clientY - y0); apply(f); };
+            const up = () => { bar.removeEventListener('pointermove', move); if (f) save(f); };
+            bar.addEventListener('pointermove', move);
+            bar.addEventListener('pointerup', up, { once: true });
+        });
+        bar.addEventListener('dblclick', () => { apply(null); save(null); });
+        bar.addEventListener('keydown', e => {
+            const d = e.key === 'ArrowUp' ? -24 : e.key === 'ArrowDown' ? 24 : 0;
+            if (!d) return;
+            e.preventDefault();
+            const f = frac(controls.getBoundingClientRect().height + d);
+            apply(f); save(f);
+        });
+    }
+
+    /**
+     * Folding the settings into one summary line (the area and each setting) with an
+     * Edit button. app.controls.collapse: true folds them when an area is first chosen,
+     * "auto" (the default) does so only when they overflow their box, false never folds.
+     */
+    collapseMode() {
+        const c = this.config.app.controls?.collapse;
+        return c === true || c === false ? c : 'auto';
+    }
+
+    wireCollapse() {
+        this.state.collapsed = false;
+        this.$('.cs-edit').onclick = () => { this.setCollapsed(false); this.$('#controls').querySelector('button, input')?.focus({ preventScroll: true }); };
+        this.$('.cs-done').onclick = () => { this.setCollapsed(true); this.$('.cs-edit').focus(); };
+        this.syncCollapsed();
+    }
+
+    autoCollapse() {
+        const mode = this.collapseMode();
+        if (mode === false || this.state.view !== 'profile') return;
+        const c = this.$('#controls');
+        if (mode === 'auto' && (c.hidden || c.scrollHeight <= c.clientHeight + 1)) return;
+        this.setCollapsed(true);
+    }
+
+    setCollapsed(v) {
+        this.state.collapsed = !!v && !!this.state.aoi && this.collapseMode() !== false;
+        this.syncCollapsed();
+    }
+
+    syncCollapsed() {
+        const s = this.state, custom = !!this.customView();
+        const folded = !!s.collapsed && s.view === 'profile' && !custom;
+        this.$('#controls').hidden = custom || folded;
+        this.$('.controls-bar').hidden = custom || folded;
+        this.$('#controls-summary').hidden = !folded;
+        this.$('.cs-done').hidden = !s.aoi || s.view !== 'profile' || this.collapseMode() === false;
+        this.$('.cs-edit').setAttribute('aria-expanded', String(!folded));
+        this.$('.cs-done').setAttribute('aria-expanded', String(!folded));
+        if (folded) this.renderSummary();
+    }
+
+    /** The folded settings' line: "Assembly District 5 · All funders · All years". */
+    renderSummary() {
+        const box = this.$('#controls-summary .cs-text');
+        const s = this.state, app = this.config.app;
+        if (!box || !s.aoi) return;
+        const names = this.chosen().map(f => f.name);
+        const area = names.length > 2 ? `${names[0]} +${names.length - 1}` : names.length ? names.join(', ') : s.aoi.label || this.kindLabel();
+        const settings = app.params.filter(p => paramActive(p, app, s.params)).map(p => summaryValue(p, s.params[p.id]));
+        box.innerHTML = `<b>${escapeHtml(area)}</b>${settings.map(t => ` · ${escapeHtml(t)}`).join('')}`;
+        box.title = [names.join(', ') || area, this.paramNote()].filter(Boolean).join(' · ');
+    }
+
+    /**
+     * A pick list under a search box (#place-results, or a source's) floats over the
+     * sidebar rather than inside the settings box, so the box's scrolling cannot clip it.
+     */
+    wireFloatingLists() {
+        const controls = this.$('#controls');
+        const place = list => {
+            const input = list.parentElement.querySelector('input') || list.parentElement;
+            const r = input.getBoundingClientRect();
+            list.classList.add('floating');
+            list.style.left = list.style.top = '0px';
+            // the list's origin, whichever box it is fixed to
+            const o = list.getBoundingClientRect();
+            list.style.left = `${r.left - o.left}px`;
+            list.style.top = `${r.bottom + 4 - o.top}px`;
+            list.style.width = `${r.width}px`;
+            list.style.maxHeight = `${Math.max(120, Math.min(300, window.innerHeight - r.bottom - 16))}px`;
+        };
+        const lists = () => controls.querySelectorAll('.search > [role="listbox"]');
+        const replace = () => lists().forEach(l => { if (!l.hidden) place(l); });
+        new MutationObserver(recs => {
+            for (const m of recs) if (m.target.matches?.('.search > [role="listbox"]') && !m.target.hidden) place(m.target);
+        }).observe(controls, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+        controls.addEventListener('scroll', replace, { passive: true });
+        window.addEventListener('resize', replace);
+    }
+}
+
+/** A "multiple" param is a menu (a button over a checklist) with "control": "menu", or past 8 options unless "control": "pills". */
+const useMenu = p => p.control === 'menu' || (p.control !== 'pills' && p.options.length > 8);
+
+/** A "multiple" param as a menu: a button naming the choice, over a checklist with group headings. */
+function multiMenu(p) {
+    const label = escapeHtml(p.label || p.id);
+    const panel = `pm-${String(p.id).replace(/[^\w-]/g, '_')}`;
+    const row = o => `<button type="button" class="pm-opt" data-value="${escapeHtml(optionValue(o))}"${o?.group ? ` data-in="${escapeHtml(o.group)}"` : ''} aria-pressed="false">${escapeHtml(optionLabel(p, o))}</button>`;
+    const groups = [...new Set(p.options.map(o => o?.group).filter(Boolean))];
+    const loose = p.options.filter(o => !o?.group);
+    return `
+            <div class="param-multi param-menu" role="group" data-param="${escapeHtml(p.id)}" aria-label="${label}">
+                <button type="button" class="pm-toggle" aria-expanded="false" aria-controls="${panel}"><span class="menu-label"></span></button>
+                <div class="pm-panel" id="${panel}" hidden>
+                    ${p.options.length > 12 ? `<input type="search" class="pm-filter" placeholder="Filter ${label.toLowerCase()}…" aria-label="Filter ${label.toLowerCase()}">` : ''}
+                    ${loose.length ? `<div class="pm-list">${loose.map(row).join('')}</div>` : ''}
+                    ${groups.map(g => `
+                    <div class="param-group" data-name="${escapeHtml(g)}">
+                        <div class="pm-head"><button type="button" class="group-head" data-group="${escapeHtml(g)}" aria-pressed="false">${escapeHtml(g)}</button><span class="group-count"></span></div>
+                        <div class="pm-list">${p.options.filter(o => o?.group === g).map(row).join('')}</div>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+}
+
+/** Open and close a menu param's checklist, and filter its options (a group's name shows the whole group). */
+function wireMenu(g) {
+    const btn = g.querySelector('.pm-toggle'), panel = g.querySelector('.pm-panel'), filter = g.querySelector('.pm-filter');
+    const open = v => {
+        panel.hidden = !v;
+        btn.setAttribute('aria-expanded', String(v));
+        // inside the settings box, bring the whole checklist into view
+        if (v) panel.scrollIntoView({ block: 'nearest' });
+    };
+    btn.onclick = () => open(panel.hidden);
+    g.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel.hidden) { e.preventDefault(); open(false); btn.focus(); } });
+    if (!filter) return;
+    filter.oninput = () => {
+        const q = filter.value.trim().toLowerCase();
+        const hit = el => !q || el.textContent.toLowerCase().includes(q);
+        g.querySelectorAll('.pm-panel > .pm-list .pm-opt').forEach(b => { b.hidden = !hit(b); });
+        g.querySelectorAll('.param-group').forEach(x => {
+            const whole = q && x.dataset.name.toLowerCase().includes(q);
+            const opts = [...x.querySelectorAll('.pm-opt')];
+            opts.forEach(b => { b.hidden = !whole && !hit(b); });
+            x.hidden = !opts.some(b => !b.hidden);
+        });
+    };
+}
+
+/** A setting as the folded summary line shows it: the value alone, or with its label for a slider or number. */
+function summaryValue(p, v) {
+    if (p.multiple) return multiLabel(p, v);
+    const text = p.control === 'range' ? paramValueLabel(p, v) : optionLabel(p, p.options.find(o => String(optionValue(o)) === String(v)) ?? v);
+    return p.control === 'slider' || p.control === 'number' ? `${p.label || p.id} ${text}` : text;
 }
 
 async function fetchJson(url) {
