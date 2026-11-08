@@ -36,7 +36,7 @@ The Assessment Explorer was forked from tpl-cities at `ca2ee19`. Comparing that 
 | `style.css` | Layout and components | 263 | 287 | 38 | core; palette becomes tokens |
 | `precompute.mjs` | Runs the same SQL ahead of time | 155 | 174 | ~120 | core; job kinds pluggable |
 | `main.js`, `access.js` | Page shell and flow | 385 + 366 | 416 | most | shared shell + app |
-| `wasm.js` | DuckDB-wasm query client | 163 | — | — | core engine |
+| `wasm.js` | DuckDB-wasm query client on geo-query-wasm's engine | 113 | — | — | core engine |
 | `browser-tiles.py`, `browser-aoi.py` | Build the wasm engine's tile set and place files | 133 + 41 | — | — | core tooling |
 | `iso.js` | Isochrone area of interest | 104 | — | — | plugin |
 | `draw.js`, `polygon.js` | Draw or upload a polygon | — | 141 | — | plugin |
