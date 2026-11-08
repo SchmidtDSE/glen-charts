@@ -32,12 +32,7 @@
  * The SQL shown in the app and in exports keeps the original s3:// paths.
  */
 
-// one pinned commit for both modules, so the engine and its defaults match
-const GEO_QUERY_WASM = 'https://cdn.jsdelivr.net/gh/SchmidtDSE/geo-query-wasm@d7807360af99a32fed0a85f74321aee14af69aa4/src';
-const [{ createEngine }, { DEFAULTS }] = await Promise.all([
-    import(`${GEO_QUERY_WASM}/engine.js`),
-    import(`${GEO_QUERY_WASM}/defaults.js`),
-]);
+import { createEngine } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/geo-query-wasm@f2179bb0834e6b53f78e2d88b116f4e16ad195ff/src/engine.js';
 
 export class WasmQueryClient {
     constructor({ duckdb, workers = 2, secrets, rewrite, tiles = null } = {}) {
@@ -49,8 +44,8 @@ export class WasmQueryClient {
             // glen-charts writes its SQL from fixed templates, so it needs no SELECT-only lock
             lock: false,
             fetchWhole: [origin && `${origin}/`, this.tiles && `${this.tiles.url}/`].filter(Boolean),
-            // settings replaces the engine's defaults, so start from them and add glen-charts' own
-            settings: { ...DEFAULTS.settings, s3_allow_recursive_globbing: false },
+            // merged over the engine's default settings
+            settings: { s3_allow_recursive_globbing: false },
         };
         // unset options keep the engine's defaults
         for (const k of Object.keys(opts)) if (opts[k] === undefined) delete opts[k];
