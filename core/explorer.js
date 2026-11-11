@@ -68,6 +68,7 @@ const SHELL = `
     </section>
     <aside id="sidebar">
         <div class="sidebar-resize" title="Drag to resize"></div>
+        <button type="button" class="sheet-handle" aria-label="Panel size" title="Drag or tap to resize the panel"></button>
         <div id="controls-summary" hidden>
             <div class="cs-text"></div>
             <button type="button" class="ghost-btn cs-edit" aria-controls="controls" aria-expanded="false">Edit</button>
@@ -183,6 +184,7 @@ class Explorer {
         this.wireSearch();
         this.wireResize();
         this.wireControlsResize();
+        this.wireSheet();
         this.wireCollapse();
         this.wireFloatingLists();
         if (app.chat) this.mountChat();
@@ -788,6 +790,8 @@ class Explorer {
         // the first area chosen folds the settings away; none chosen opens them again
         if (aoi && !had && aoi.kind !== 'state') this.autoCollapse();
         else if (!aoi) this.setCollapsed(false);
+        // on a phone, a newly chosen area raises a lowered panel so its results show
+        if (aoi && this.sheet?.detent() === 'peek') this.sheet.set('half');
         this.renderSummary();
         this.writeHash();
         if (this.state.view !== 'profile') return;
@@ -1220,6 +1224,85 @@ class Explorer {
             handle.addEventListener('pointermove', move);
             handle.addEventListener('pointerup', up, { once: true });
         });
+    }
+
+    /* --------------------------------------------------------------- sheet */
+
+    /**
+     * On a narrow screen (820px or less) the sidebar is a bottom sheet over a
+     * full-height map, as in glen. Its handle drags it between three heights:
+     * peek (the handle and the top of the settings, so the map is nearly
+     * full-screen), half, and full. A tap on the handle raises it a step, and
+     * from full lowers it to half; the arrow keys move it too. The map is
+     * padded by the sheet's height, up to half the screen, so a fitted area
+     * lands in the part of the map that shows.
+     */
+    wireSheet() {
+        const el = this.el, handle = this.$('.sheet-handle');
+        const mq = window.matchMedia('(max-width: 820px)');
+        const ORDER = ['peek', 'half', 'full'];
+        const LABEL = { peek: 'Panel lowered', half: 'Panel at half height', full: 'Panel at full height' };
+        const heights = () => {
+            const full = el.clientHeight;
+            return { peek: Math.min(96, full), half: Math.round(full * 0.5), full };
+        };
+        let detent = 'half';
+        const place = px => {
+            el.style.setProperty('--sheet-h', `${Math.round(px)}px`);
+            this.mapView.map.setPadding({ top: 0, left: 0, right: 0, bottom: Math.min(px, heights().half) });
+        };
+        const set = d => {
+            detent = d;
+            el.dataset.sheet = d;
+            handle.setAttribute('aria-label', `${LABEL[d]}; drag, tap or use the arrow keys to resize`);
+            place(heights()[d]);
+        };
+        const sync = () => {
+            el.classList.toggle('sheet', mq.matches);
+            if (mq.matches) set(detent);
+            else {
+                el.style.removeProperty('--sheet-h');
+                delete el.dataset.sheet;
+                this.mapView.map.setPadding({ top: 0, left: 0, right: 0, bottom: 0 });
+            }
+            requestAnimationFrame(() => this.mapView.map.resize());
+        };
+        const step = dir => set(ORDER[Math.max(0, Math.min(ORDER.length - 1, ORDER.indexOf(detent) + dir))]);
+        handle.addEventListener('pointerdown', e => {
+            if (!el.classList.contains('sheet')) return;
+            e.preventDefault();
+            handle.setPointerCapture(e.pointerId);
+            const y0 = e.clientY, h0 = heights()[detent];
+            let moved = false, done = false;
+            el.classList.add('sheet-dragging');
+            const move = ev => {
+                if (Math.abs(ev.clientY - y0) > 6) moved = true;
+                if (moved) place(Math.max(heights().peek, Math.min(heights().full, h0 + y0 - ev.clientY)));
+            };
+            const up = ev => {
+                if (done) return;
+                done = true;
+                handle.removeEventListener('pointermove', move);
+                el.classList.remove('sheet-dragging');
+                if (!moved) return set(detent === 'full' ? 'half' : ORDER[ORDER.indexOf(detent) + 1]);
+                // snap to the nearest height
+                const h = heights(), at = h0 + y0 - ev.clientY;
+                set(ORDER.reduce((a, b) => (Math.abs(h[b] - at) < Math.abs(h[a] - at) ? b : a)));
+            };
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('pointerup', up, { once: true });
+            handle.addEventListener('pointercancel', up, { once: true });
+        });
+        handle.addEventListener('keydown', e => {
+            const d = e.key === 'ArrowUp' ? 1 : e.key === 'ArrowDown' ? -1 : 0;
+            if (!d) return;
+            e.preventDefault();
+            step(d);
+        });
+        mq.addEventListener('change', sync);
+        window.addEventListener('resize', () => { if (el.classList.contains('sheet')) set(detent); });
+        sync();
+        this.sheet = { set, detent: () => (el.classList.contains('sheet') ? detent : null) };
     }
 
     /* ------------------------------------------------------------ settings */

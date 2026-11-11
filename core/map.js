@@ -14,43 +14,93 @@ import { hover } from './charts.js';
 const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services';
 
 /**
- * Basemaps (app.json "basemap"): a name below, or { tiles, attribution, ref_tiles? }.
+ * Basemaps (app.json "basemap"): a name below, or { tiles, attribution, ref_tiles?, label? }.
  * `ref_tiles` is a label overlay drawn above the data layers; without one,
  * labels are part of the base tiles and the data layers sit on top of them.
+ *
+ * A switch on the map offers the basemaps in app.json "basemaps" (names or
+ * objects as above), by default the app's basemap and satellite imagery, as
+ * glen does. The first is shown at start unless "basemap" names another of
+ * them. "basemaps": false, or a list of one, leaves the switch out.
  */
 const BASEMAPS = {
     'light-gray': {
+        label: 'Plain',
         tiles: `${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
         ref_tiles: `${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
         attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
     },
     'dark-gray': {
+        label: 'Dark',
         tiles: `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
         ref_tiles: `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
         attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
     },
     natgeo: {
+        label: 'NatGeo',
         tiles: `${ESRI}/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}`,
         attribution: 'Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA',
     },
+    satellite: {
+        label: 'Satellite',
+        tiles: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+        maxzoom: 19,
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    },
 };
 
-function baseStyle(basemap = 'light-gray') {
-    const b = typeof basemap === 'object' ? basemap : (BASEMAPS[basemap] || BASEMAPS['light-gray']);
-    const sources = { base: { type: 'raster', tileSize: 256, maxzoom: 16, tiles: [b.tiles], attribution: b.attribution || '' } };
-    if (b.ref_tiles) sources.ref = { type: 'raster', tileSize: 256, maxzoom: 16, tiles: [b.ref_tiles] };
+/** The basemaps an app offers, as [{ key, label, tiles, ... }], the one shown first at index 0 of `shown`. */
+export function basemapChoices(app = {}) {
+    const resolve = (b, i) => (typeof b === 'object' && b ? { label: `Basemap ${i + 1}`, ...b, key: b.key || `custom-${i}` }
+        : BASEMAPS[b] ? { ...BASEMAPS[b], key: b } : null);
+    const first = app.basemap ?? 'light-gray';
+    let list = app.basemaps === false ? [first]
+        : Array.isArray(app.basemaps) && app.basemaps.length ? app.basemaps
+        : [first, ...(first === 'satellite' ? [] : ['satellite'])];
+    const choices = list.map(resolve).filter(Boolean);
+    if (!choices.length) choices.push({ ...BASEMAPS['light-gray'], key: 'light-gray' });
+    // app.basemap picks the one shown at start when it is in the list
+    const key = typeof first === 'string' ? first : null;
+    const shown = Math.max(0, choices.findIndex(c => c.key === key));
+    return { choices, shown };
+}
+
+function baseStyle(app) {
+    const { choices, shown } = basemapChoices(app);
+    const sources = {}, layers = [], refs = [];
+    choices.forEach((b, i) => {
+        const visibility = i === shown ? 'visible' : 'none';
+        sources[`base-${b.key}`] = { type: 'raster', tileSize: 256, maxzoom: b.maxzoom ?? 16, tiles: [b.tiles], attribution: b.attribution || '' };
+        layers.push({ id: `base-${b.key}`, type: 'raster', source: `base-${b.key}`, layout: { visibility } });
+        if (b.ref_tiles) {
+            sources[`ref-${b.key}`] = { type: 'raster', tileSize: 256, maxzoom: b.maxzoom ?? 16, tiles: [b.ref_tiles] };
+            refs.push({ id: `ref-${b.key}`, type: 'raster', source: `ref-${b.key}`, layout: { visibility } });
+        }
+    });
     return {
         version: 8,
         glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
         sources,
-        layers: [
-            { id: 'base', type: 'raster', source: 'base' },
-            // data layers are inserted below 'ref' so place labels stay on top;
-            // with no label overlay, 'ref' is an invisible anchor
-            b.ref_tiles ? { id: 'ref', type: 'raster', source: 'ref' }
-                : { id: 'ref', type: 'background', paint: { 'background-opacity': 0 } },
-        ],
+        // data layers are inserted below 'ref', an invisible anchor, so the
+        // basemaps' label overlays above it stay on top
+        layers: [...layers, { id: 'ref', type: 'background', paint: { 'background-opacity': 0 } }, ...refs],
     };
+}
+
+/** A map control with one button per basemap. */
+class BasemapControl {
+    constructor(view, choices, shown) { this.view = view; this.choices = choices; this.current = choices[shown].key; }
+    onAdd() {
+        const el = this.el = document.createElement('div');
+        el.className = 'maplibregl-ctrl basemap-switch';
+        el.setAttribute('role', 'group');
+        el.setAttribute('aria-label', 'Basemap');
+        el.innerHTML = this.choices.map(c => `<button type="button" data-basemap="${escapeHtml(c.key)}" aria-pressed="${c.key === this.current}">${escapeHtml(c.label)}</button>`).join('');
+        el.addEventListener('click', e => { const b = e.target.closest('button'); if (b) this.view.setBasemap(b.dataset.basemap); });
+        return el;
+    }
+    sync(key) { this.el?.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.basemap === key))); }
+    onRemove() { this.el?.remove(); }
 }
 
 export class MapView {
@@ -60,12 +110,16 @@ export class MapView {
         maplibregl.addProtocol('pmtiles', protocol.tile);
         this.map = new maplibregl.Map({
             container: containerId,
-            style: baseStyle(app.basemap),
+            style: baseStyle(app),
             center: app.view.center,
             zoom: app.view.zoom,
             attributionControl: { compact: true },
         });
         this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+        const { choices, shown } = basemapChoices(app);
+        this.basemaps = choices;
+        this.basemap = choices[shown].key;
+        if (choices.length > 1) this.map.addControl(this._basemapCtl = new BasemapControl(this, choices, shown), 'top-right');
         this.ready = new Promise(r => this.map.on('load', r));
         this.jur = null;
         this.onPick = () => {};
@@ -85,6 +139,17 @@ export class MapView {
      * features is under the pointer, and the boundary's popup and hover give way
      * there. A click still selects the area underneath.
      */
+    /** Show the basemap with this key, one of app.json "basemaps". */
+    setBasemap(key) {
+        if (!this.basemaps.some(b => b.key === key)) return;
+        this.basemap = key;
+        for (const b of this.basemaps) {
+            const v = b.key === key ? 'visible' : 'none';
+            for (const id of [`base-${b.key}`, `ref-${b.key}`]) if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', v);
+        }
+        this._basemapCtl?.sync(key);
+    }
+
     async addOverlay(o) {
         await this.ready;
         const m = this.map;

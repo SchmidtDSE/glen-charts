@@ -41,7 +41,8 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `mcp_url` | the duckdb-geo MCP server. A `config.json` next to the page with `mcp_server_url` overrides it at run time |
 | `engine` / `wasm` | `"mcp"` (default) or `"wasm"`; `wasm` holds the DuckDB-wasm options (see `core/wasm.js`) |
 | `view` | initial map `{ center, zoom }` |
-| `basemap` | `"light-gray"` (default), `"dark-gray"`, `"natgeo"`, or `{ tiles, attribution, ref_tiles? }`; `ref_tiles` is a label layer drawn above the data |
+| `basemap` | `"light-gray"` (default), `"dark-gray"`, `"natgeo"`, `"satellite"`, or `{ tiles, attribution, ref_tiles?, label?, maxzoom? }`; `ref_tiles` is a label layer drawn above the data |
+| `basemaps` | the basemaps a switch on the map offers, as names or objects like `basemap`; by default `basemap` and `"satellite"`. `basemap` picks the one shown first. `false`, or a list of one, leaves the switch out |
 | `overview`, `themes` | theme folder names (or paths) under `config/themes/`; the overview card is always shown, the themes are toggled |
 | `jurisdictions` | area types; see below |
 | `statewide` | optional whole region: `{ aoi, aoi10, label, kind_label?, description?, selectable? }`. Gives a region mode (unless `selectable: false`) and "California: …" comparisons on every tile and a tick on bar charts |
@@ -172,6 +173,10 @@ Once an area is chosen, the settings can fold into one line that names the area 
 ```json
 "controls": { "collapse": true }
 ```
+
+### Phones
+
+At 820px wide or less the sidebar becomes a bottom sheet over a full-height map, as in glen. Its handle drags it between three heights: lowered, with only the top of the settings showing, half the screen, and full. A tap on the handle raises it a step (and from full lowers it to half), and the arrow keys move it too. Choosing an area raises a lowered sheet to half. The map's legends and attribution sit above the sheet, and an area fitted to the map lands in the part that shows. Compare mode keeps the map above the panel.
 
 ## Themes
 
