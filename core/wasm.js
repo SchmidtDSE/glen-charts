@@ -32,7 +32,7 @@
  * The SQL shown in the app and in exports keeps the original s3:// paths.
  */
 
-import { createEngine } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/geo-query-wasm@f2179bb0834e6b53f78e2d88b116f4e16ad195ff/src/engine.js';
+import { createEngine } from 'https://cdn.jsdelivr.net/gh/SchmidtDSE/geo-query-wasm@v0.6.0/src/engine.js';
 
 export class WasmQueryClient {
     constructor({ duckdb, workers = 2, secrets, rewrite, tiles = null } = {}) {
