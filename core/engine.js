@@ -327,6 +327,41 @@ export function nearestOption(p, x) {
     return best;
 }
 
+
+/**
+ * The MapLibre filter an overlay takes at the current settings, and a note
+ * naming what it shows: { filter, note }, filter null for every feature.
+ *
+ * "param_filters": [{ param, property, values? }] keeps the features whose
+ * `property` is among the chosen options' values: each option's `values`
+ * field (a value or a list) when given, else the option's own value. An entry
+ * does nothing where its param does not apply (`when`), where the param's
+ * "any" option is chosen, or where a chosen option lacks the `values` field
+ * (e.g. an "All" option). Entries that apply are combined with "all".
+ * An overlay's `filter` is a MapLibre expression, or (params, app) →
+ * expression | null, combined with the param filters.
+ */
+export function overlayFilter(o, app, params = {}) {
+    const parts = [];
+    let note = '';
+    for (const f of o.param_filters || []) {
+        const p = (app.params || []).find(x => x.id === f.param);
+        if (!p || !paramActive(p, app, params)) continue;
+        const vals = paramValues(p, params[p.id] ?? paramDefault(p)).map(String);
+        if (!vals.length || (p.any !== undefined && vals.includes(String(p.any)))) continue;
+        const chosen = vals.map(v => p.options.find(o => String(optionValue(o)) === v)).filter(o => o !== undefined);
+        if (!chosen.length) continue;
+        if (f.values && chosen.some(c => !c || typeof c !== 'object' || c[f.values] === undefined || c[f.values] === null)) continue;
+        const keep = [...new Set(chosen.flatMap(c => (f.values ? [].concat(c[f.values]) : [optionValue(c)])))];
+        if (!keep.length) continue;
+        parts.push(['match', ['get', f.property], keep, true, false]);
+        note = chosen.length <= 3 ? listLabel(chosen.map(c => optionLabel(p, c))) : `${chosen.length} ${(p.label || p.id).toLowerCase()} choices`;
+    }
+    const own = typeof o.filter === 'function' ? o.filter(params, app) : o.filter;
+    if (own) parts.unshift(own);
+    return { filter: parts.length === 0 ? null : parts.length === 1 ? parts[0] : ['all', ...parts], note };
+}
+
 /** { WIDTH: '10', ... } for template expansion. */
 export function paramTokens(app, params = {}) {
     const out = {};

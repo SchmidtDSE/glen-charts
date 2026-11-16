@@ -157,6 +157,7 @@ export class MapView {
         if (!m.getSource(src)) m.addSource(src, { type: 'vector', url: `pmtiles://${o.url}` });
         m.addLayer({ id: layer, type: o.type || 'fill', source: src, 'source-layer': o.source_layer, paint: o.paint || {} }, o.above ? undefined : 'ref');
         (this._overlays ??= new Map()).set(o.id, layer);
+        if (this._overlayFilters?.has(o.id)) m.setFilter(layer, this._overlayFilters.get(o.id));
         if (!o.popup) return;
         if (o.popup_priority) (this._priorityLayers ??= new Set()).add(layer);
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
@@ -167,6 +168,13 @@ export class MapView {
             if (p) popup.setLngLat(e.lngLat).setHTML(o.popup(p)).addTo(m);
         });
         m.on('mouseleave', layer, () => popup.remove());
+    }
+
+    /** Show only an overlay's features matching a MapLibre filter (null: all), now or once it is added. */
+    setOverlayFilter(id, filter) {
+        (this._overlayFilters ??= new Map()).set(id, filter);
+        const layer = this._overlays?.get(id);
+        if (layer && this.map.getLayer(layer)) this.map.setFilter(layer, filter);
     }
 
     setOverlayVisible(id, on) {
