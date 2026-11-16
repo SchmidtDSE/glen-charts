@@ -363,6 +363,7 @@ details.method pre {
 #overlay-legend .lg-row i.snone { box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); }
 #overlay-legend .lg-toggle { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 11.5px; color: var(--text-3); cursor: pointer; }
 #overlay-legend .ov + .ov { margin-top: 8px; }
+#overlay-legend .ov-filter { margin-top: 4px; font-weight: 600; color: var(--text-2); }
 #map-legend .ramp { display: flex; height: 10px; border-radius: 2px; overflow: hidden; margin: 5px 0 3px; }
 #map-legend .ramp span { flex: 1; }
 #map-legend .ends { display: flex; justify-content: space-between; color: var(--text-3); font-variant-numeric: tabular-nums; }

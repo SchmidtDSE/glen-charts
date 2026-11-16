@@ -49,7 +49,7 @@
  * of their union.
  */
 
-import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, multiLabel, toggleMulti, toggleGroup, rangeValue } from './engine.js';
+import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, multiLabel, toggleMulti, toggleGroup, rangeValue, overlayFilter } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
@@ -237,15 +237,18 @@ class Explorer {
                 }),
             ].filter(Boolean).join('<br>') : undefined,
         });
-        for (const o of [...(this.config.app.overlays || []).map(fromConfig), ...this.ext.overlays]) {
+        this.overlays = [...(this.config.app.overlays || []).map(fromConfig), ...this.ext.overlays];
+        this.syncOverlayFilters();
+        for (const o of this.overlays) {
             this.mapView.addOverlay(o).then(() => { if (o.visible === false) this.mapView.setOverlayVisible(o.id, false); });
             if (o.legend || o.toggle) {
-                parts.push(`<div class="ov" data-ov="${escapeHtml(o.id)}">${o.legend || ''}${o.toggle ? `<label class="lg-toggle"><input type="checkbox"${o.visible === false ? '' : ' checked'}> ${escapeHtml(o.toggle)}</label>` : ''}</div>`);
+                parts.push(`<div class="ov" data-ov="${escapeHtml(o.id)}">${o.legend || ''}<div class="ov-filter" hidden></div>${o.toggle ? `<label class="lg-toggle"><input type="checkbox"${o.visible === false ? '' : ' checked'}> ${escapeHtml(o.toggle)}</label>` : ''}</div>`);
             }
         }
         if (!parts.length) return;
         box.innerHTML = parts.join('');
         box.hidden = false;
+        this.syncOverlayFilters();
         box.querySelectorAll('.ov').forEach(d => {
             const cb = d.querySelector('input');
             if (cb) cb.onchange = () => this.mapView.setOverlayVisible(d.dataset.ov, cb.checked);
@@ -404,8 +407,27 @@ class Explorer {
         }
     }
 
+    /**
+     * Filter each overlay to the current settings (overlayFilter), and name
+     * what it shows in its legend.
+     */
+    syncOverlayFilters() {
+        if (!this.mapView) return;
+        for (const o of this.overlays || []) {
+            if (!o.filter && !o.param_filters) continue;
+            const { filter, note } = overlayFilter(o, this.config.app, this.state.params);
+            this.mapView.setOverlayFilter(o.id, filter);
+            const el = this.$(`#overlay-legend .ov[data-ov="${CSS.escape(o.id)}"] .ov-filter`);
+            if (el) {
+                el.textContent = filter && note ? `Showing ${note} only` : '';
+                el.hidden = !(filter && note);
+            }
+        }
+    }
+
     markParams() {
         const app = this.config.app;
+        this.syncOverlayFilters();
         this.$('#step-params').querySelectorAll('.param[data-pid]').forEach(el => {
             el.hidden = !paramActive(app.params.find(p => p.id === el.dataset.pid), app, this.state.params);
         });

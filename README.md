@@ -60,7 +60,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `data_base` | folder holding `data/`, when a site variant shares another's |
 | `pages` | extra tabs that show an HTML file, e.g. an About page: `[{ "id": "about", "label": "About", "file": "config/about.html", "full": true, "sources": true }]`. `full` hides the map and gives the panel the whole width; `sources` appends the citations of every dataset the app queries, from `data/sources.json` (`precompute sources`). The tab is kept in the link (`?view=about`) |
 | `chat` | an optional assistant; see [Chat](#chat). Without this block no LLM code loads |
-| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them; `"popup_priority": true` shows its popup rather than the area's wherever one of its features is under the pointer, for features that lie inside areas such as project footprints (without it the area's popup wins); a click still selects the area underneath |
+| `overlays` | map layers under the boundaries, as the extension `overlays` (below) with a declared popup: `popup_title` (a property) and `popup_fields` (`["Country", ["Area (ha)", "Area"]]`); `"visible": false` starts the layer switched off; `"above": true` draws it over the boundaries (and leaderboard colours) instead of under them; `"popup_priority": true` shows its popup rather than the area's wherever one of its features is under the pointer, for features that lie inside areas such as project footprints (without it the area's popup wins); a click still selects the area underneath; `"param_filters"` shows only the features that match the current settings (see [Overlay filters](#overlay-filters)) |
 
 An area type:
 
@@ -271,13 +271,27 @@ What configuration cannot express, an app passes to `createExplorer({ extensions
 export default {
   tokens:   { LAND: (aoi, app, params) => '...SQL...' },        // extra template tokens
   charts:   { representation: { load(ctx), render(el, chart, data, ctx), css } },
-  overlays: [{ id, url, source_layer, type, paint, popup: props => html, popup_priority, legend: html, toggle: 'Show …' }],
+  overlays: [{ id, url, source_layer, type, paint, popup: props => html, popup_priority, legend: html, toggle: 'Show …',
+               param_filters, filter: (params, app) => expression }],         // see Overlay filters
   sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
   views:    [{ id, label, full, render(el, ctx) }],             // extra tabs drawn by the app; ctx = { engine, app, explorer }
 };
 ```
+
+### Overlay filters
+
+An overlay can follow the params, showing only the features that match the current settings. Each entry of `param_filters` names a param and a tile property, and keeps the features whose property is among the chosen options' values: each option's own value, or, with `values`, the named field of each option (a value or a list):
+
+```json
+"param_filters": [
+  { "param": "manager", "property": "MNG_AG_LEV", "values": "levels" },
+  { "param": "agency",  "property": "MNG_AGENCY", "values": "agencies" }
+]
+```
+
+An entry does nothing where its param does not apply (`when`), where its `any` option is chosen, or where a chosen option has no `values` field, so an "All" option shows every feature. Entries that apply are combined, and the overlay's legend gains a line naming the choice ("Showing BLM only"). An overlay's `filter`, a MapLibre expression or, in an extension, `(params, app) => expression | null`, is combined with them. The properties must be in the tiles, not only in the parquet.
 
 A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` is `{ engine, theme, chart, aoi, isRegion, params, opts }`. Imports of glen-charts from jsDelivr inside an extension module resolve to the local library when the CLI runs it.
 
