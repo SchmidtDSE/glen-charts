@@ -34,6 +34,9 @@
  *   option that stands for all of them: it is exclusive, and an empty choice
  *   falls back to it. An option's "group" draws it under a heading that
  *   chooses the whole group (see toggleGroup).
+ *   A single-choice option may carry "tokens": { NAME: "text" }, bound while
+ *   it is chosen, so one setting can switch several templates at once (e.g. the
+ *   boundary tiles and the name field of each data source).
  *   With "control": "range" the value is two of the options, which are ordered
  *   stops, [low, high], bound as {{TOKEN_MIN}} and {{TOKEN_MAX}} (or the two
  *   names in "tokens"). See rangeValue.
@@ -344,6 +347,8 @@ export function paramTokens(app, params = {}) {
         for (const x of vs) if (!p.options.some(o => String(optionValue(o)) === String(x))) throw new Error(`Invalid value for ${p.id}: ${x}`);
         if (p.multiple && !vs.length) throw new Error(`No value for ${p.id}`);
         out[p.token || p.id.toUpperCase()] = p.multiple ? sqlList(vs, p.options.every(o => typeof optionValue(o) === 'number')) : String(v);
+        // an option's own tokens ({ "value": "a", "tokens": { "URL": "..." } }) are bound while it is chosen
+        if (!p.multiple) Object.assign(out, p.options.find(o => o && typeof o === 'object' && String(optionValue(o)) === String(v))?.tokens || {});
     }
     return out;
 }

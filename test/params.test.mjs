@@ -22,3 +22,12 @@ test('a snapped value is always a valid token', () => {
         assert.doesNotThrow(() => paramTokens({ params: [adjust] }, { adjust: v }));
     }
 });
+
+test('a chosen option binds its own tokens', () => {
+    const source = { id: 'source', token: 'SOURCE', default: 'a', options: [
+        { value: 'a', label: 'A', tokens: { UNIT_URL: 'https://x/a.pmtiles', UNIT_NAME: 'name' } },
+        { value: 'b', label: 'B', tokens: { UNIT_URL: 'https://x/b.pmtiles', UNIT_NAME: 'facility_name' } },
+    ] };
+    assert.deepEqual(paramTokens({ params: [source] }, {}), { SOURCE: 'a', UNIT_URL: 'https://x/a.pmtiles', UNIT_NAME: 'name' });
+    assert.equal(paramTokens({ params: [source] }, { source: 'b' }).UNIT_NAME, 'facility_name');
+});

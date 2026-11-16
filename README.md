@@ -51,7 +51,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `labels` | `{ area, sections, place_hint, map_chips }` step titles |
 | `controls` | `{ collapse }`: whether the settings fold into one summary line once an area is chosen; see [The settings panel](#the-settings-panel) |
 | `format` | `{ nodata: "—", pct_decimals: "auto" | 1 }` |
-| `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }` |
+| `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity, point, point_opacity }` |
 | `tracts` | `{ url, source_layer, id_prop, line_width? }` for themes that color tracts (`theme.map`). `line_width` is the cell outline width, a number or a MapLibre expression (default 0.4); use a zoom expression for cells only a pixel or two wide at the landing zoom. A list of grids, each with an `id` and a `minzoom` and/or `maxzoom`, swaps grids by zoom, e.g. a coarse H3 grid zoomed out and a fine one zoomed in; see `theme.map.levels` |
 | `default_area` | `{ jurisdiction, id }`: the area whose profile a link with no `#…` opens on, instead of an empty picker |
 | `live_note` | text shown when a named area has no precomputed file |
@@ -79,6 +79,8 @@ An area type:
 - `list_params: true` when the list depends on a param (areas that exist only at some settings); it is then re-read when the param changes.
 - The boundary `filter` may contain param tokens (`"{{WIDTH}}"`, filled as a number when numeric) and follows the param.
 - The boundary `url` and `source_layer` may contain param tokens too, for areas with one tile set per param value (`".../level_0{{LEVEL}}.pmtiles"`); the boundaries reload when the param changes, keeping the selection and leaderboard colours.
+- The boundary `name_prop` may contain param tokens too, for tile sets whose name field differs.
+- Point features in the boundary tiles are drawn as circles, with the same hover, click, selection ring and leaderboard colours as polygons, so an area type may be a set of sites. `boundary_style` takes `point` and `point_opacity` for their plain colour. Points with no leaderboard score stay grey and clickable.
 - `boundary.style` overrides `app.boundary_style` for one area type, e.g. `{ "selected": "#c2410c", "selected_width": 1.2 }` for a thin outline on detailed polygons.
 - `picker: "map"` chooses areas by clicking the map only: the search box gives way to `labels.place_hint` (e.g. "Click a coastline on the map").
 - `multiple: true` lets the reader choose several areas of the type at once. Each pick from the list adds one, shown as a removable tag under the search box. A map click adds an area, or removes it if it is already chosen. The chosen areas are outlined together, the map fits to all of them, and the profile covers their union: `{{AOI}}` and `{{AOI10}}` are the `UNION` of each area's `aoi`/`aoi10`. The title lists the names, and the link holds the ids, comma-separated (`#county/06001,06013`). With several areas `{{ID}}` is unbound (and no precomputed single-area rows apply); use `{{IDS}}`, the ids as a quoted SQL list bound for one area or several, as in `GEOID IN ({{IDS}})`. Extension code reads them as `aoi.ids`. With one area chosen, everything is as without `multiple`. Opening a leaderboard row chooses that area alone, and so does the assistant's `select_area` unless it passes `add: true`. A chosen area stays chosen when a setting change leaves it out of the list.
@@ -116,6 +118,16 @@ A headline, a chart, a chart series or `app.reference` may carry `"when": { "<pa
 ```
 
 The export runs only the queries of the items shown.
+
+A single-choice option may carry its own `tokens`, bound while it is chosen, so one setting can switch several templates at once. A source switch can then name each source's tile set, layer and name field together:
+
+```json
+{ "id": "source", "label": "Source", "token": "SOURCE", "default": "a",
+  "options": [{ "value": "a", "label": "Source A", "tokens": { "UNIT_URL": "https://.../a.pmtiles", "UNIT_NAME": "name" } },
+              { "value": "b", "label": "Source B", "tokens": { "UNIT_URL": "https://.../b.pmtiles", "UNIT_NAME": "facility_name" } }] }
+```
+
+The tokens are config text, not reader input, so they are safe in SQL and in boundary fields; they are not part of the file and cache key, which the option's value already sets.
 
 A param may carry `when` too, which makes it a drill-down: its control shows only at those settings of the params before it, and elsewhere it is held at its default and left out of the file and cache key, so adding it does not rename the files of the settings it does not apply to. Under Federal, say, a second control picks one agency:
 
