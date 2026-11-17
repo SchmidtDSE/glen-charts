@@ -56,6 +56,7 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `default_area` | `{ jurisdiction, id }`: the area whose profile a link with no `#…` opens on, instead of an empty picker |
 | `live_note` | text shown when a named area has no precomputed file |
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
+| `report` | the printable report's cover and citation; see [Report](#report) |
 | `extensions` | path of the app's extension module, for the precompute CLI |
 | `data_base` | folder holding `data/`, when a site variant shares another's |
 | `pages` | extra tabs that show an HTML file, e.g. an About page: `[{ "id": "about", "label": "About", "file": "config/about.html", "full": true, "sources": true }]`. `full` hides the map and gives the panel the whole width; `sources` appends the citations of every dataset the app queries, from `data/sources.json` (`precompute sources`). The tab is kept in the link (`?view=about`) |
@@ -275,6 +276,25 @@ An app may add an assistant beside the report. It is optional: the explorer impo
 - `add_card` shows a result as a table or a bar chart in the chat. **Add to report** turns it into a report panel whose SQL re-runs for each area the reader picks, with its SQL under "Method & SQL" like any other panel.
 - The system prompt describes the tools and tokens, lists every panel's SQL template so the model can reuse its datasets and joins, and appends the app's own `system_prompt` file.
 
+## Report
+
+Beside **Export** (a self-contained HTML file with every query's code and output), the **Report** button opens the view on the screen as a document to print or save as PDF, for readers rather than re-runners. A cover gives the title, the map as the reader framed it (redrawn at a fixed landscape size) and the overview's headline numbers. One section per theme follows, each on a new page, with its tiles and charts as rendered, extension charts included. The back matter gives the app's notes, each theme's method, a "how to cite" line, the link to the live view and the dataset citations from `data/sources.json`. Pages carry a running header (title and settings) and page numbers. The report reuses the page's stylesheets, so apps restyle it with their own CSS. The browser's print dialog saves it ("Save as PDF").
+
+```json
+"report": {
+  "title": "{area}",
+  "subtitle": "{kind} · {settings}",
+  "org": "Example Lab",
+  "logo": "img/logo.svg",
+  "accent": "#006837",
+  "page": "letter",
+  "citation": "{org}{app}: {title}. Report generated {date}. {url}",
+  "note": "<p>Shown under About this report.</p>"
+}
+```
+
+Every field is optional. Title templates take `{area}`, `{kind}`, `{settings}` (the param summary) and `{app}`; an extension's `reportTitle(aoi, ctx)` gives a title that depends on the settings, such as "BLM land in Mojave Desert". `logo` is a URL or a list of `{ src, alt }`; `page` is `"letter"` or `"A4"`; the citation template adds `{title}`, `{org}` (with its full stop), `{date}`, `{year}` and `{url}`.
+
 ## Extensions
 
 What configuration cannot express, an app passes to `createExplorer({ extensions })` from its own module (`app/extensions.js`, also named in `app.json` `extensions` so the CLI gets its tokens and cites its overlays; the CLI imports it under Node, so it must not touch `document` or `maplibregl` at load time):
@@ -288,6 +308,7 @@ export default {
   sources:  [polygonSource()],                                   // area modes beyond the area types; see Area sources
   reportHead: (aoi, ctx) => html,                                // under the report title
   shortName:  label => short,                                    // chart row labels
+  reportTitle: (aoi, ctx) => title,                              // the printable report's title for this view
   views:    [{ id, label, full, render(el, ctx) }],             // extra tabs drawn by the app; ctx = { engine, app, explorer }
 };
 ```
