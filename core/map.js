@@ -5,11 +5,19 @@
  * drawn/uploaded shapes.
  *
  * Boundary style (optional), app.boundary_style overridden per area type by boundary.style:
- *   { fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity }
+ *   { fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity,
+ *     point, point_opacity }   (point: the colour of Point features, drawn as circles)
  */
 
 import { fmt, escapeHtml } from './format.js';
 import { hover } from './charts.js';
+
+// area boundaries: polygons draw as fill + line, points as circles; each has a selected outline
+const JUR_LAYERS = ['jur-fill', 'jur-line', 'jur-point', 'jur-hover', 'jur-selected', 'jur-selected-point'];
+const JUR_PICK = ['jur-fill', 'jur-point'];
+const IS_POINT = ['in', ['geometry-type'], ['literal', ['Point', 'MultiPoint']]];
+
+const POINT_RADIUS = ['interpolate', ['linear'], ['zoom'], 3, 3, 8, 5, 12, 8];
 
 const ESRI = 'https://services.arcgisonline.com/ArcGIS/rest/services';
 
@@ -163,7 +171,7 @@ export class MapView {
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
         m.on('mousemove', layer, e => {
             if (this._drawing) return;
-            if (!o.popup_priority && this.jur && m.getLayer('jur-fill') && m.queryRenderedFeatures(e.point, { layers: ['jur-fill'] }).length) return popup.remove();
+            if (!o.popup_priority && this.jur && this._jurAt(e.point)) return popup.remove();
             const p = e.features[0]?.properties;
             if (p) popup.setLngLat(e.lngLat).setHTML(o.popup(p)).addTo(m);
         });
@@ -185,7 +193,7 @@ export class MapView {
     clearJurisdiction() {
         const m = this.map;
         if (!m.getStyle()) return;
-        for (const id of ['jur-fill', 'jur-line', 'jur-hover', 'jur-selected']) if (m.getLayer(id)) m.removeLayer(id);
+        for (const id of JUR_LAYERS) if (m.getLayer(id)) m.removeLayer(id);
         if (m.getSource('jur')) m.removeSource('jur');
         this.jur = null;
         this._popup.remove();
@@ -226,7 +234,7 @@ export class MapView {
     async showJurisdiction(jur, tokens = {}) {
         await this.ready;
         const m = this.map;
-        for (const id of ['jur-fill', 'jur-line', 'jur-hover', 'jur-selected']) if (m.getLayer(id)) m.removeLayer(id);
+        for (const id of JUR_LAYERS) if (m.getLayer(id)) m.removeLayer(id);
         if (m.getSource('jur')) m.removeSource('jur');
         this.jur = jur;
         const b = jur.boundary;
@@ -235,7 +243,7 @@ export class MapView {
         this._srcLayer = this._fillTokens(b.source_layer);
         m.addSource('jur', { type: 'vector', url: `pmtiles://${this._url}`, promoteId: b.id_prop });
         const filter = this._boundaryFilter();
-        const st = this._st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, ...this.app.boundary_style, ...b.style };
+        const st = this._st = { fill: '#22201f', opacity: 0, hover_opacity: 0.10, line: '#2f4a2c', line_opacity: 0.55, selected: '#111', selected_width: 2.5, selected_opacity: 1, point: '#2f4a2c', point_opacity: 0.75, ...this.app.boundary_style, ...b.style };
         m.addLayer({
             id: 'jur-fill', type: 'fill', source: 'jur', 'source-layer': this._srcLayer, filter,
             paint: {
@@ -248,9 +256,28 @@ export class MapView {
             paint: { 'line-color': st.line, 'line-opacity': st.line_opacity, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.4, 10, 1.2] },
         }, 'ref');
         m.addLayer({
+            id: 'jur-point', type: 'circle', source: 'jur', 'source-layer': this._srcLayer, filter: this._pointFilter(filter),
+            paint: {
+                'circle-radius': POINT_RADIUS,
+                'circle-color': st.point,
+                'circle-opacity': st.point_opacity,
+                'circle-stroke-color': '#fff',
+                'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2, 0.6],
+            },
+        }, 'ref');
+        m.addLayer({
             id: 'jur-selected', type: 'line', source: 'jur', 'source-layer': this._srcLayer,
             filter: ['==', ['get', b.id_prop], '__none__'],
             paint: { 'line-color': st.selected, 'line-width': st.selected_width, 'line-opacity': st.selected_opacity },
+        });
+        m.addLayer({
+            id: 'jur-selected-point', type: 'circle', source: 'jur', 'source-layer': this._srcLayer,
+            filter: this._pointFilter(['==', ['get', b.id_prop], '__none__']),
+            paint: {
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 10, 10],
+                'circle-opacity': 0,
+                'circle-stroke-color': st.selected, 'circle-stroke-width': st.selected_width, 'circle-stroke-opacity': st.selected_opacity,
+            },
         });
         this._wire();
     }
@@ -259,7 +286,12 @@ export class MapView {
         if (this._wired) return;
         this._wired = true;
         const m = this.map;
-        m.on('mousemove', 'jur-fill', e => {
+        for (const layer of JUR_PICK) this._wireLayer(layer);
+    }
+
+    _wireLayer(layer) {
+        const m = this.map;
+        m.on('mousemove', layer, e => {
             const f = e.features[0];
             if (!f || this._drawing) return;
             m.getCanvas().style.cursor = 'pointer';
@@ -274,19 +306,19 @@ export class MapView {
             }
             this._hoverId = f.id;
             m.setFeatureState({ source: 'jur', sourceLayer: this._srcLayer, id: f.id }, { hover: true });
-            const name = f.properties[this.jur.boundary.name_prop] ?? f.id;
+            const name = f.properties[this._fillTokens(this.jur.boundary.name_prop)] ?? f.id;
             let html = `<b>${escapeHtml(name)}</b>`;
             const t = this._tractAt(e.point);
             if (t) html += `<br>${escapeHtml(this._choro.label)}: ${fmt(t.value, this._choro.format)}`;
             if (this.popupExtra) html += this.popupExtra(String(f.properties[this.jur.boundary.id_prop] ?? f.id)) || '';
             this._popup.setLngLat(e.lngLat).setHTML(html).addTo(m);
         });
-        m.on('mouseleave', 'jur-fill', () => {
+        m.on('mouseleave', layer, () => {
             m.getCanvas().style.cursor = '';
             this._clearHover();
             this._popup.remove();
         });
-        m.on('click', 'jur-fill', e => {
+        m.on('click', layer, e => {
             if (this._drawing) return;
             const f = e.features[0];
             if (f) this.onPick(String(f.properties[this.jur.boundary.id_prop] ?? f.id));
@@ -321,7 +353,7 @@ export class MapView {
     async select(id, bbox) {
         await this.ready;
         this._selectedId = Array.isArray(id) ? (id.length ? id.map(String) : null) : String(id);
-        this.map.setFilter('jur-selected', this._selectedFilter());
+        this._applySelected();
         if (bbox && bbox.every(Number.isFinite)) {
             // xmin > xmax: the area crosses the antimeridian; fit across it
             const xmax = bbox[2] < bbox[0] ? bbox[2] + 360 : bbox[2];
@@ -338,6 +370,24 @@ export class MapView {
             : typeof v === 'string' ? v.replace(/\{\{(\w+)\}\}/g, (m, k) => this._tokens?.[k] ?? m)
             : v;
         return fill(f);
+    }
+
+    /** Only the Point features of a boundary filter: the circle layers draw those. */
+    _pointFilter(f) {
+        return f === true ? IS_POINT : ['all', f, IS_POINT];
+    }
+
+    /** True when an area boundary is drawn under the point. */
+    _jurAt(point) {
+        const layers = JUR_PICK.filter(l => this.map.getLayer(l));
+        return layers.length > 0 && this.map.queryRenderedFeatures(point, { layers }).length > 0;
+    }
+
+    /** Outline the selected area(s), as a line around polygons and a ring around points. */
+    _applySelected() {
+        const m = this.map, f = this._selectedFilter();
+        if (m.getLayer('jur-selected')) m.setFilter('jur-selected', f);
+        if (m.getLayer('jur-selected-point')) m.setFilter('jur-selected-point', this._pointFilter(f));
     }
 
     _selectedFilter() {
@@ -363,13 +413,14 @@ export class MapView {
         if (this._fillTokens(b.url) !== this._url || this._fillTokens(b.source_layer) !== this._srcLayer) {
             this._hoverId = null;
             await this.showJurisdiction(this.jur, tokens);
-            this.map.setFilter('jur-selected', this._selectedFilter());
+            this._applySelected();
             if (this._colors) await this.setJurisdictionColors(this._colors);
             return;
         }
         if (!b.filter) return;
         for (const id of ['jur-fill', 'jur-line']) if (this.map.getLayer(id)) this.map.setFilter(id, this._boundaryFilter());
-        if (this.map.getLayer('jur-selected')) this.map.setFilter('jur-selected', this._selectedFilter());
+        if (this.map.getLayer('jur-point')) this.map.setFilter('jur-point', this._pointFilter(this._boundaryFilter()));
+        this._applySelected();
     }
 
     /**
@@ -389,6 +440,8 @@ export class MapView {
             m.setPaintProperty('jur-line', 'line-color', st.line);
             m.setPaintProperty('jur-line', 'line-opacity', st.line_opacity);
             m.setPaintProperty('jur-line', 'line-width', ['interpolate', ['linear'], ['zoom'], 5, 0.4, 10, 1.2]);
+            m.setPaintProperty('jur-point', 'circle-color', st.point);
+            m.setPaintProperty('jur-point', 'circle-opacity', st.point_opacity);
             return;
         }
         const match = ['match', ['to-string', ['get', this.jur.boundary.id_prop]]];
@@ -402,6 +455,11 @@ export class MapView {
         m.setPaintProperty('jur-line', 'line-color', line);
         m.setPaintProperty('jur-line', 'line-opacity', 0.95);
         m.setPaintProperty('jur-line', 'line-width', ['interpolate', ['linear'], ['zoom'], 1, 1.6, 5, 1.2, 10, 1.2]);
+        // points with no score (outside the view) stay faint but clickable
+        const pt = match.slice();
+        pt[pt.length - 1] = 'rgba(120,120,120,0.35)';
+        m.setPaintProperty('jur-point', 'circle-color', pt);
+        m.setPaintProperty('jur-point', 'circle-opacity', 0.9);
     }
 
     /** Hover-highlight one area from outside the map (e.g. a table row); null clears. */
@@ -419,7 +477,7 @@ export class MapView {
 
     clearSelection() {
         this._selectedId = null;
-        if (this.map.getLayer('jur-selected')) this.map.setFilter('jur-selected', this._selectedFilter());
+        this._applySelected();
         this.clearChoropleth();
     }
 
