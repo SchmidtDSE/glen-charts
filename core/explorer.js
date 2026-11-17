@@ -54,6 +54,7 @@ import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
 import { Leaderboard, leaderboardCss } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
 import { wireExportButton } from './export.js';
+import { wirePrintButton } from './print-report.js';
 import { escapeHtml, setFormatOptions, fmt } from './format.js';
 
 const SHELL = `
@@ -1016,6 +1017,7 @@ class Explorer {
                     <h2>${escapeHtml(aoi.label)}</h2>
                 </div>
                 <div class="head-actions">
+                    <button class="ghost-btn" id="print-btn" type="button" title="A report of this view to print or save as PDF: cover, map, numbers, charts and citations">Report</button>
                     <button class="ghost-btn" id="export-btn" type="button" title="Download this view as a report: numbers, charts, code (SQL / R / Python) and data citations">Export</button>
                     <button class="ghost-btn" id="copy-link" type="button" title="Copy a link to this view">Copy link</button>
                 </div>
@@ -1026,6 +1028,13 @@ class Explorer {
             try { await navigator.clipboard.writeText(location.href); this.$('#copy-link').textContent = 'Copied'; } catch { /* ignore */ }
         };
         const themes = [this.config.overview, ...this.orderedThemes()].filter(Boolean);
+        wirePrintButton(this.$('#print-btn'), () => ({
+            engine: this.engine, aoi, mapView: this.mapView, kind: this.kindLabel(), subtitle: paramNote,
+            themes, reportEl: r, legendEl: this.el.querySelector('.map-legends'), siteTitle: app.title || document.title,
+            base: this.engine.dataBase, projectUrl: app.project_url,
+            reference: this.reference?.citation ? this.reference : null,
+            report: app.report, title: this.ext.reportTitle?.(aoi, { engine: this.engine, isRegion }) || null,
+        }));
         wireExportButton(this.$('#export-btn'), () => ({
             engine: this.engine, aoi, mapView: this.mapView, kind: this.kindLabel(), subtitle: paramNote,
             themes, reportEl: r, legendEl: this.el.querySelector('.map-legends'), siteTitle: app.title || document.title,

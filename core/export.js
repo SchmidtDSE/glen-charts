@@ -14,7 +14,7 @@ import { matchSources } from './sources.js';
 import { escapeHtml } from './format.js';
 import { matchesWhen } from './engine.js';
 
-const GEO_AGENT_EXPORT = 'https://cdn.jsdelivr.net/gh/boettiger-lab/geo-agent@v3.35.0/app/export-report.js';
+export const GEO_AGENT_EXPORT = 'https://cdn.jsdelivr.net/gh/boettiger-lab/geo-agent@v3.35.0/app/export-report.js';
 const OUTPUT_ROWS = 20;
 const SPEED_NOTE = 'The app runs these queries on servers next to the data (the duckdb-geo MCP server). ' +
     'Re-run on a personal computer, large areas may take much longer.';
@@ -94,7 +94,7 @@ export async function exportReport(o) {
  * the live map is swapped for this picture on paper. Read inside a render
  * pass, so the app's map needs no preserveDrawingBuffer.
  */
-function mapSnapshot(map) {
+export function mapSnapshot(map) {
     return new Promise(resolve => {
         const timer = setTimeout(() => resolve(null), 5000);
         map.once('render', () => {
@@ -106,7 +106,7 @@ function mapSnapshot(map) {
 }
 
 /** Wait until no panel is still loading (or give up after 5 minutes). */
-async function settled(el, timeoutMs = 300000) {
+export async function settled(el, timeoutMs = 300000) {
     const t0 = Date.now();
     while (el.querySelector('.skeleton') && Date.now() - t0 < timeoutMs) {
         await new Promise(r => setTimeout(r, 250));
@@ -115,7 +115,7 @@ async function settled(el, timeoutMs = 300000) {
 }
 
 /** Queries a theme's panel shows at these settings: headlines, charts (incl. pivots) and its map. */
-function usedQueries(theme, app = {}, params = {}) {
+export function usedQueries(theme, app = {}, params = {}) {
     const names = new Set();
     const applies = x => matchesWhen(x.when, app, params);
     for (const h of (theme.headlines || []).filter(applies)) names.add(h.query);
@@ -281,7 +281,7 @@ ${sourcesHtml(d.datasets)}
 </html>`;
 }
 
-function sourcesHtml(datasets) {
+export function sourcesHtml(datasets) {
     if (!datasets.length) return '';
     const a = (href, text) => href ? `<a href="${escapeHtml(href)}">${text}</a>` : text;
     const items = datasets.map(d => {
