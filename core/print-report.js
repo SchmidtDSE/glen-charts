@@ -136,6 +136,7 @@ ${cards.map(section).join('\n')}
   ${sourcesHtml(datasets)}
 </section>
 </main>
+<script>${FIT_SCRIPT.replace('__PAGE__', cfg.page === 'A4' ? '11.69' : '11')}</script>
 </body>
 </html>`;
 }
@@ -218,6 +219,117 @@ export function wirePrintButton(btn, getOptions) {
     };
 }
 
+/**
+ * Fit the report to pages. A chart is an image and cannot split by itself, so
+ * one that misses the rest of a page would move whole to the next and leave a
+ * gap. This walks the report as the printer will (the screen column has the
+ * printed width) and, for a chart or a row of charts that does not fit:
+ * narrows its drawing to the space left when that keeps it at 70% of its size
+ * or more (titles and legends keep their size); else, with a fifth of a page
+ * or more left, cuts the drawing between two rows of bars and continues it on
+ * the next page; else moves it to the next page. A section starts a new page
+ * only when less than a third of a page is left. Tables split by row.
+ */
+const FIT_SCRIPT = `
+(function () {
+  function px(inches) { var d = document.createElement('div'); d.style.height = inches + 'in'; document.body.appendChild(d); var h = d.getBoundingClientRect().height; d.remove(); return h; }
+  function box(els) {
+    var t = Infinity, b = -Infinity;
+    els.forEach(function (e) { var r = e.getBoundingClientRect(); t = Math.min(t, r.top); b = Math.max(b, r.bottom); });
+    return { top: t, bottom: b, h: b - t };
+  }
+  function svgs(els) { var a = []; els.forEach(function (e) { e.querySelectorAll('svg').forEach(function (g) { a.push(g); }); }); return a; }
+  // the drawn part of a row of charts, which scales with its width
+  function drawnHeight(els) {
+    var h = 0;
+    els.forEach(function (e) { var s = 0; e.querySelectorAll('svg').forEach(function (g) { s += g.getBoundingClientRect().height; }); h = Math.max(h, s); });
+    return h;
+  }
+  function shrink(els, s) { svgs(els).forEach(function (g) { g.style.width = (s * 100).toFixed(1) + '%'; }); }
+  // cut a one-drawing chart between two rows of text so its top part fits in
+  // maxPx of the page; the rest goes into a new chart box after it
+  function split(el, maxPx) {
+    var g = el.querySelectorAll('svg');
+    if (g.length !== 1 || !g[0].viewBox || !g[0].viewBox.baseVal || !g[0].viewBox.baseVal.height) return null;
+    g = g[0];
+    var vb = g.viewBox.baseVal, gr = g.getBoundingClientRect(), k = gr.height / vb.height;
+    var above = gr.top - el.getBoundingClientRect().top;
+    var ys = [], x0 = vb.x, x1 = vb.x + vb.width;
+    g.querySelectorAll('text').forEach(function (t) {
+      try { var b = t.getBBox(); ys.push(b.y + b.height / 2); x0 = Math.min(x0, b.x); x1 = Math.max(x1, b.x + b.width); } catch (e) {}
+    });
+    ys.sort(function (a, b) { return a - b; });
+    var rows = ys.filter(function (y, i) { return i === 0 || y - ys[i - 1] > 3; });
+    var cut = null;
+    for (var i = 1; i < rows.length; i++) {
+      var c = (rows[i - 1] + rows[i]) / 2;
+      if (above + (c - vb.y) * k <= maxPx && c - vb.y > 0.2 * vb.height && vb.y + vb.height - c > 0.1 * vb.height) cut = c;
+    }
+    if (cut === null) return null;
+    var rest = el.cloneNode(false);
+    rest.classList.add('pr-cont');
+    var g2 = g.cloneNode(true);
+    // labels may run past the frame; widen it to keep them whole
+    g2.setAttribute('viewBox', [x0, cut, x1 - x0, vb.y + vb.height - cut].join(' '));
+    g2.removeAttribute('height');
+    rest.appendChild(g2);
+    // charts draw with overflow visible: the two parts must clip at the cut
+    g.style.overflow = g2.style.overflow = 'hidden';
+    g.setAttribute('viewBox', [x0, vb.y, x1 - x0, cut - vb.y].join(' '));
+    g.removeAttribute('height');
+    // in a grid of charts, under the first part rather than beside it
+    rest.style.gridColumnStart = '1';
+    el.after(rest);
+    return rest;
+  }
+  function fit() {
+    var pageH = px(__PAGE__ - 0.65 - 0.7) - 20;
+    var cursor = 0, prevBottom = null;
+    document.querySelectorAll('.pr-section').forEach(function (sec, si) {
+      if (si > 0 && pageH - cursor < pageH / 3) { sec.classList.add('pr-new-page'); cursor = 0; prevBottom = null; }
+      else if (si === 0) { cursor = 0; prevBottom = null; }
+      // blocks in reading order; charts sharing a top edge form one row
+      var queue = [];
+      Array.prototype.forEach.call(sec.children, function (el) {
+        if (!el.classList.contains('charts')) { queue.push({ els: [el], split: el.matches('.pr-notes') }); return; }
+        var rows = [];
+        Array.prototype.forEach.call(el.children, function (c) {
+          var top = Math.round(c.getBoundingClientRect().top);
+          var row = rows.filter(function (r) { return Math.abs(r.top - top) < 3; })[0];
+          if (row) row.els.push(c); else rows.push({ top: top, els: [c] });
+        });
+        rows.forEach(function (r) { queue.push({ els: r.els, split: r.els.some(function (c) { return c.querySelector('table'); }) }); });
+      });
+      for (var q = 0; q < queue.length; q++) {
+        var b = queue[q], r = box(b.els);
+        if (prevBottom !== null) cursor += Math.max(0, r.top - prevBottom);
+        if (b.split) {
+          cursor += r.h;
+          while (cursor > pageH) cursor -= pageH;
+        } else if (cursor + r.h <= pageH) {
+          cursor += r.h;
+        } else {
+          var free = pageH - cursor, d = drawnHeight(b.els), s = d ? (d - (r.h - free)) / d : 0, rest = null;
+          if (free > 0.15 * pageH && s >= 0.7) {
+            shrink(b.els, s);
+          } else if (free > 0.2 * pageH && b.els.length === 1 && (rest = split(b.els[0], free))) {
+            queue.splice(q + 1, 0, { els: [rest], split: false });
+          } else {
+            // the next page; a drawing taller than a page is cut again there
+            cursor = 0;
+            if (r.h > pageH && b.els.length === 1 && (rest = split(b.els[0], pageH))) queue.splice(q + 1, 0, { els: [rest], split: false });
+          }
+          r = box(b.els);
+          cursor += r.h;
+        }
+        prevBottom = r.bottom;
+      }
+    });
+  }
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(function () { setTimeout(fit, 50); });
+})();
+`;
+
 const PRINT_CSS = `
 :root { --pr-accent: var(--primary, #006837); }
 html, body.pr-body { height: auto; background: #e9e7e3; }
@@ -246,7 +358,10 @@ body.pr-body { margin: 0; color: var(--text, #22201f); -webkit-print-color-adjus
 .pr-cover-tiles .tile-value { font-size: 26px; }
 .pr-cover-foot { margin: 14px 0 0; font-size: 11.5px; color: var(--text-3, #77706b); }
 
-.pr-section { container-type: inline-size; break-before: page; }
+.pr-section { container-type: inline-size; margin-top: 30px; }
+.pr-section.pr-first, .pr-section.pr-new-page { break-before: page; margin-top: 0; }
+.pr-section h2 { break-after: avoid; }
+.pr-section .chart.pr-cont { margin-top: 0; }
 .pr-section h2 { font-size: 22px; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 3px solid var(--c); }
 .pr-blurb { color: var(--text-2, #4f4a47); font-size: 13px; margin: 0 0 12px; }
 .pr-notes { font-size: 12.5px; margin: 10px 0 14px; }
