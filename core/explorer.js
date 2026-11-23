@@ -910,15 +910,29 @@ class Explorer {
         if (this.state.view === v.id) r.innerHTML = this.pageHtml[v.id];
     }
 
+    /** The area clicked on the leaderboard since it was opened, unless it is already chosen. */
+    leaderboardFocus() {
+        const id = this.lb?.focusId;
+        if (id == null || id === this.lbFocusAtEntry || !this.state.jur) return null;
+        if (this.chosen().some(f => sameId(f.id, id))) return null;
+        return this.featureById(id);
+    }
+
     leaderboardJur() {
         const spec = this.config.app.leaderboard;
         return this.config.app.jurisdictions.find(j => j.id === spec.jurisdiction) || this.config.app.jurisdictions[0];
     }
 
-    async setView(view, { lbState = null } = {}) {
+    /**
+     * carry: leaving the leaderboard for the profile opens the area last
+     * clicked there (on the map or by name), so the profile shows the area the
+     * map just zoomed to. Callers that choose an area themselves pass false.
+     */
+    async setView(view, { lbState = null, carry = true } = {}) {
         const spec = this.config.app.leaderboard;
         if (!this.views().some(v => v.id === view)) view = 'profile';
         const s = this.state;
+        const from = s.view;
         s.view = view;
         this.markView();
         const custom = this.customView();
@@ -938,7 +952,7 @@ class Explorer {
                         const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k]));
                         this.mapView.select(f.id, bbox);
                     },
-                    onOpen: f => { this.setView('profile').then(() => this.pick(f, { replace: true })); },
+                    onOpen: f => { this.setView('profile', { carry: false }).then(() => this.pick(f, { replace: true })); },
                     onHover: id => this.mapView.highlight(id),
                     onScores: res => this.colorByScore(res),
                     onChange: () => this.writeHash(),
@@ -948,11 +962,14 @@ class Explorer {
             if (lbState === null && this.pendingScore != null) { lbState = this.pendingScore; this.pendingScore = null; }
             if (lbState !== null) this.lb.setStateString(lbState);
             this.lb.el = this.$('#report');
+            this.lbFocusAtEntry = this.lb.focusId;
             this.mapView.clearSelection();
             await this.lb.load(s.params, this.paramNote());
         } else {
             this.mapView.setJurisdictionColors(null);
             this.$('#map-legend').hidden = true;
+            const carried = carry && from === 'leaderboard' ? this.leaderboardFocus() : null;
+            if (carried) { this.pick(carried); this.renderTags(); this.writeHash(); return; }
             const ids = this.chosen().map(f => f.id);
             if (ids.length) this.mapView.select(s.jur?.multiple ? ids : ids[0]); else this.mapView.clearSelection();
             this.renderTags();
