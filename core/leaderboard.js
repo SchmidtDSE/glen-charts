@@ -573,10 +573,14 @@ export const leaderboardCss = `
 .lb-tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 0 14px 8px; }
 .lb-search { flex: 1 1 180px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--card-bg); font: inherit; font-size: 13px; }
 .lb-count { font-size: 12px; color: var(--text-3); }
-.lb-scroll { overflow-x: auto; }
+/* No overflow here: a scrolling wrapper would become the box the sticky header
+   sticks to, and it never scrolls vertically, so the header would scroll away
+   with the rows. The report panel scrolls instead, sideways too when narrow. */
+.lb-scroll { overflow: visible; }
 .lb-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .lb-table th {
-    position: sticky; top: 0; background: var(--card-bg); z-index: 1;
+    /* stick at the panel's top edge, not below its top padding, so no row shows above */
+    position: sticky; top: calc(-1 * var(--report-pad-top, 0px)); background: var(--card-bg); z-index: 1;
     text-align: left; font-weight: 600; font-size: 11.5px; color: var(--text-2);
     padding: 6px 5px; border-bottom: 1px solid var(--line-strong); cursor: pointer; user-select: none; vertical-align: bottom; line-height: 1.25;
 }

@@ -214,7 +214,7 @@ ${this.stateText()}`;
                     const q = String(name).toLowerCase();
                     const f = all.find(x => String(x.name).toLowerCase() === q) || all.find(x => String(x.name).toLowerCase().startsWith(q)) || all.find(x => String(x.name).toLowerCase().includes(q));
                     if (!f) throw new Error(`No ${jur.singular || jur.label} named ${name}.`);
-                    if (this.ex.state.view !== 'profile') await this.ex.setView('profile');
+                    if (this.ex.state.view !== 'profile') await this.ex.setView('profile', { carry: false });
                     if (this.ex.state.mode !== jur.id) await this.ex.setMode(jur.id);
                     this.ex.pick(f, { replace: !(add && jur.multiple) });
                     const chosen = this.ex.chosen();
