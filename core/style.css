@@ -1,8 +1,11 @@
 /* glen-charts base stylesheet: the glen-web sidebar shell (map left,
  * full-height resizable panel right). An app re-themes it by overriding the
- * :root tokens (palette, --header-h) in its own stylesheet, loaded after this one. */
+ * :root tokens (palette, --header-h) in its own stylesheet, loaded after this one.
+ * The printable report (body.pr-body) gets these defaults back, since it prints on
+ * white paper whatever the app's theme; an app styles the report by setting tokens
+ * on body.pr-body. */
 
-:root {
+:root, :where(body.pr-body) {
     --primary: #006837;
     --primary-strong: #004d29;
     --primary-wash: rgba(0, 104, 55, 0.08);

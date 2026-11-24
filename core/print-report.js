@@ -66,8 +66,9 @@ export async function buildPrintReport(o) {
     let legend = '';
     if (o.legendEl && !o.legendEl.hidden) {
         const lg = clean(o.legendEl);
-        lg.querySelectorAll('input, label').forEach(n => n.remove());
-        legend = `<div class="pr-legend">${lg.innerHTML}</div>`;
+        lg.querySelectorAll('input, label, [hidden]').forEach(n => n.remove());
+        // a legend whose entries are all hidden would print as an empty box
+        if (lg.textContent.trim()) legend = `<div class="pr-legend">${lg.innerHTML}</div>`;
     }
     const cite = fill(cfg.citation || '{org}{app}. ({year}). {title}. Report generated {date}. {url}', {
         title, org: cfg.org ? `${cfg.org}. ` : '', app: o.siteTitle || '', date: dateText, year: date.getFullYear(), url,
@@ -245,7 +246,20 @@ const FIT_SCRIPT = `
     els.forEach(function (e) { var s = 0; e.querySelectorAll('svg').forEach(function (g) { s += g.getBoundingClientRect().height; }); h = Math.max(h, s); });
     return h;
   }
-  function shrink(els, s) { svgs(els).forEach(function (g) { g.style.width = (s * 100).toFixed(1) + '%'; }); }
+  function shrink(els, s) { svgs(els).forEach(function (g) { g.style.width = (g.getBoundingClientRect().width * s).toFixed(1) + 'px'; }); }
+  // A chart's text is in its viewBox units, which match the pixels it was drawn
+  // at on screen, so print every chart at that width: never wider (a wide report
+  // column would enlarge its text), and on a row of its own when its grid column
+  // is much narrower (which would shrink its text). Charts then share one text size.
+  function natural() {
+    document.querySelectorAll('.pr-section .chart svg').forEach(function (g) {
+      var vb = g.viewBox && g.viewBox.baseVal;
+      if (!vb || !vb.width) return;
+      g.style.maxWidth = vb.width + 'px';
+      var c = g.closest('.chart');
+      if (c && c.parentElement && c.parentElement.classList.contains('charts') && c.getBoundingClientRect().width < 0.85 * vb.width) c.classList.add('wide');
+    });
+  }
   // cut a one-drawing chart between two rows of text so its top part fits in
   // maxPx of the page; the rest goes into a new chart box after it
   function split(el, maxPx) {
@@ -283,6 +297,7 @@ const FIT_SCRIPT = `
     return rest;
   }
   function fit() {
+    natural();
     var pageH = px(__PAGE__ - 0.65 - 0.7) - 20;
     var cursor = 0, prevBottom = null;
     document.querySelectorAll('.pr-section').forEach(function (sec, si) {
