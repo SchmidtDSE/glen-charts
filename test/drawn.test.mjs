@@ -84,3 +84,29 @@ test('distribution of a drawn area reads its comparison type', async () => {
     assert.deepEqual(seen, ['eco']);
     assert.deepEqual(d, [{ __id: '1', variable: 'x', value: 1 }]);
 });
+
+test('drawn_pct fills a percentile column for a drawn area, leaving non-comparable rows null', async () => {
+    const theme = { id: 't', queries: { q: { file: 'q.sql', all: 'q-all.sql', drawn_pct: { field: 'pct', scale: 0.01 } } } };
+    const app = { params: [], jurisdictions: [{ id: 'eco' }] };
+    const live = [{ variable: 'x', value: 5, dir: 1, pct: null }, { variable: 'y', value: 5, dir: -1, pct: null }, { variable: 'tot', value: 9, comparable: false, pct: null }];
+    const engine = new Engine({ app }, { client: { query: async () => live }, dataBase: null });
+    engine.sqlFor = () => 'SELECT 1';
+    const all = Object.fromEntries([1, 2, 3, 4].map(i => [i, [{ variable: 'x', value: i }, { variable: 'y', value: i }, { variable: 'tot', value: i }]]));
+    engine.allResults = async () => all;
+    const rows = await engine.run(theme, 'q', { kind: 'polygon', key: 'poly:1', compareKind: 'eco', source: 'draw' });
+    assert.deepEqual(rows.map(r => r.pct), [1, 0, null]);
+    // a named area's rows are left as they are
+    const named = await engine.drawnPct(theme, 'q', { kind: 'eco', id: '1', compareKind: 'eco' }, live);
+    assert.equal(named, live);
+});
+
+test('polygonAoi fills at res 8 without sql10 when asked', async () => {
+    const { polygonAoi } = await import('../sources/polygon.js');
+    const g = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
+    const a8 = polygonAoi([g], 'x', { res: 8 });
+    assert.equal(a8.sql10, undefined);
+    assert.match(a8.sql, /h3_polygon_wkt_to_cells\(wkt, 8\)/);
+    assert.notEqual(a8.key, polygonAoi([g], 'x').key);
+    assert.match(polygonAoi([g], 'x').sql10, /wkt, 10/);
+    assert.throws(() => polygonAoi([g], 'x', { res: 9 }));
+});

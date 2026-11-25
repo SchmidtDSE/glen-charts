@@ -31,7 +31,7 @@
  * sources: true appends the dataset citations from data/sources.json), chat (core/chat.js:
  * an optional assistant, loaded only when this block is present; without it no LLM code loads).
  * area_sources ([{ type: "polygon" | "isochrone", id?, label?, description?, kind_label?,
- * compare_with? }]) turns on the library's own area sources without a page script; they follow
+ * compare_with?, res? (polygon: 8 or 10) }]) turns on the library's own area sources without a page script; they follow
  * any extension sources. A source's areas are compared with one area type: compare_with (an area
  * type id, or false for none), else the leaderboard's type. The percentile strip then places a
  * drawn area among that type's areas, and the profile adds a card with the score and rank it
@@ -301,7 +301,7 @@ class Explorer {
             const load = SOURCE_TYPES[spec.type];
             if (!load) { console.error(`area_sources: unknown type "${spec.type}"`); continue; }
             const make = await load();
-            const source = make({ id: spec.id, label: spec.label, description: spec.description, kindLabel: spec.kind_label });
+            const source = make({ id: spec.id, label: spec.label, description: spec.description, kindLabel: spec.kind_label, res: spec.res });
             if (spec.compare_with !== undefined) source.compareWith = spec.compare_with;
             if ([...this.ext.sources, ...made].some(x => x.id === source.id)) { console.error(`area_sources: a source "${source.id}" already exists; give this one an id`); continue; }
             made.push(source);
@@ -327,7 +327,7 @@ class Explorer {
             s.mount(step, {
                 mapView: this.mapView,
                 engine: this.engine,
-                setAoi: aoi => { aoi.params = this.state.params; aoi.compareKind ??= this.compareKindFor(s); this.setAoi(aoi); },
+                setAoi: aoi => { aoi.params = this.state.params; aoi.source = s.id; aoi.compareKind ??= this.compareKindFor(s); this.setAoi(aoi); },
                 select: () => { if (this.state.mode !== s.id) this.setMode(s.id, { restoring: true }); },
                 showHint: t => this.showHint(t),
                 hideHint: () => this.hideHint(),
@@ -985,6 +985,9 @@ class Explorer {
                     onHover: id => this.mapView.highlight(id),
                     onScores: res => this.colorByScore(res),
                     onChange: () => this.writeHash(),
+                    // sources whose areas are ranked among this type: a button to draw one
+                    drawSources: this.ext.sources.filter(x => this.compareKindFor(x) === jur.id),
+                    onDraw: id => { this.setView('profile', { carry: false }).then(() => this.setMode(id)); },
                 });
                 this.mapView.popupExtra = id => (this.state.view === 'leaderboard' ? this.lb.popupFor(id) : '');
             }
@@ -1104,6 +1107,7 @@ class Explorer {
         if (lbSpec && aoi.compareKind && aoi.kind !== aoi.compareKind && aoi.compareKind === this.leaderboardJur().id) {
             r.appendChild(drawnRankCard({
                 engine: this.engine, spec: lbSpec, jur: this.leaderboardJur(), aoi, paramNote, isCurrent: opts.isCurrent,
+                genericLabels: ['Drawn area', this.activeSource()?.kindLabel].filter(Boolean),
                 state: this.lb?.state ?? parseState(lbSpec, this.pendingScore || ''),
             }));
         }

@@ -49,7 +49,8 @@ const MAX_W = 3;
 export class Leaderboard {
     /**
      * ctx: { engine, spec, jur, onShow(feature), onOpen(feature), onHover(id|null),
-     *        onScores({ rows, inScope }), onChange() }
+     *        onScores({ rows, inScope }), onChange(),
+     *        drawSources: [{ id, label, description }] ranked among this type, onDraw(id) }
      */
     constructor(el, ctx) {
         Object.assign(this, { el, ctx });
@@ -131,6 +132,7 @@ export class Leaderboard {
                     <h2>${escapeHtml(spec.title || `All ${peers}, ranked`)}</h2>
                 </div>
                 <div class="head-actions">
+                    ${(this.ctx.drawSources || []).map(s => `<button class="ghost-btn lb-draw" type="button" data-source="${escapeHtml(s.id)}" title="${escapeHtml(s.description || s.label)}, and see where it would rank here">${escapeHtml(this.ctx.drawSources.length > 1 ? s.label : spec.draw_label || 'Rank your own area')}</button>`).join('')}
                     <button class="ghost-btn" id="lb-csv" type="button" title="Download the table as CSV" disabled>CSV</button>
                     <button class="ghost-btn" id="copy-link" type="button" title="Copy a link to this view, scoring included">Copy link</button>
                 </div>
@@ -142,6 +144,7 @@ export class Leaderboard {
         this.el.querySelector('#copy-link').onclick = async () => {
             try { await navigator.clipboard.writeText(location.href); this.el.querySelector('#copy-link').textContent = 'Copied'; } catch { /* ignore */ }
         };
+        this.el.querySelectorAll('.lb-draw').forEach(b => { b.onclick = () => this.ctx.onDraw?.(b.dataset.source); });
     }
 
     renderBody() {
@@ -570,16 +573,17 @@ export function scoreDrawn(data, vals, state, spec) {
  * The profile card for a drawn area: its overall and pillar scores among the
  * leaderboard's areas, and the rank it would take, from each pillar's query
  * run live over the area.
- *   ctx: { engine, spec, jur, aoi, state, isCurrent(), paramNote }
+ *   ctx: { engine, spec, jur, aoi, state, isCurrent(), paramNote, genericLabels: labels that
+ *          only name the kind of area (e.g. "Drawn area"), written as "this area" }
  */
-export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () => true, paramNote = '' }) {
+export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () => true, paramNote = '', genericLabels = [] }) {
     const card = document.createElement('section');
     card.className = 'card lb-drawn';
     const peers = jur.peer_label || jur.label.toLowerCase();
     const overallLabel = spec.overall?.label || 'Overall';
     card.innerHTML = `
         <div class="card-head"><h3>Among ${escapeHtml(peers)}</h3></div>
-        <p class="card-blurb">Where ${escapeHtml(aoi.label || 'this area')} would rank if it were one of the ${escapeHtml(peers)}, scored as on the ${escapeHtml((spec.tab || 'leaderboard').toLowerCase())}.</p>
+        <p class="card-blurb">Where ${!aoi.label || genericLabels.includes(aoi.label) ? 'this area' : `“${escapeHtml(aoi.label)}”`} would rank if it were one of the ${escapeHtml(peers)}, scored as on the ${escapeHtml((spec.tab || 'leaderboard').toLowerCase())}.</p>
         <div class="lb-drawn-body"><div class="tile-note lb-drawn-progress">Loading the ${escapeHtml(peers)}…</div></div>`;
     const body = card.querySelector('.lb-drawn-body');
     const progress = card.querySelector('.lb-drawn-progress');
@@ -617,7 +621,11 @@ export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () =>
             <table class="lb-drawn-table"><tbody>
                 ${data.pillars.map(p => {
                     const ps = res.pillars[p.theme.id];
-                    return `<tr style="--c:${p.color}"><th><span class="dot"></span>${escapeHtml(p.label)}</th>${bar(ps.score, p.color)}<td class="num rank">${ps.rank ? `${ordinal(ps.rank)} of ${ps.of}` : ''}</td></tr>`;
+                    // a pillar whose weighted variables are all left out says why it has no score
+                    const none = ps.score === null && !p.variables.some(v => v.comparable && (state.vars[v.key]?.w ?? 1) > 0);
+                    const why = none ? `<td colspan="2" class="lb-drawn-none">No comparable variables at these weights${p.variables.some(v => v.comparable) ? '; switch one on under Scoring' : ''}</td>`
+                        : `${bar(ps.score, p.color)}<td class="num rank">${ps.rank ? `${ordinal(ps.rank)} of ${ps.of}` : ''}</td>`;
+                    return `<tr style="--c:${p.color}"><th><span class="dot"></span>${escapeHtml(p.label)}</th>${why}</tr>`;
                 }).join('')}
             </tbody></table>
             <p class="tile-note">${[
@@ -757,6 +765,7 @@ export const leaderboardCss = `
 .lb-drawn-table td.bar { white-space: nowrap; }
 .lb-drawn-table td.bar .track { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--line); vertical-align: middle; margin-right: 6px; overflow: hidden; }
 .lb-drawn-table td.bar .track i { display: block; height: 100%; background: var(--c); }
+.lb-drawn-table td.lb-drawn-none { color: var(--text-3); font-size: 12px; }
 .lb-drawn-table td.rank { text-align: right; color: var(--text-2); white-space: nowrap; }
 .lb-open:hover { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 `;

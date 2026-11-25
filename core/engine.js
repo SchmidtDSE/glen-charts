@@ -46,6 +46,7 @@
  */
 
 import { McpQueryClient } from './mcp.js';
+import { percentileAmong, isComparable } from './leaderboard.js';
 
 export async function loadConfig(base = '.', fetchText = defaultFetchText, { themes: only = null } = {}) {
     const app = JSON.parse(await fetchText(`${base}/config/app.json`));
@@ -570,7 +571,8 @@ export class Engine {
             const p = this.precomputed(theme, queryName, aoi).then(rows => {
                 if (rows) return rows;
                 const sql = this.sqlFor(theme, queryName, aoi);
-                return this.client.query(sql, { aoi }).catch(err => { err.sql = sql; throw err; });
+                return this.client.query(sql, { aoi }).catch(err => { err.sql = sql; throw err; })
+                    .then(live => this.drawnPct(theme, queryName, aoi, live));
             }).catch(err => {
                 this.cache.delete(key);          // let a retry re-run it
                 throw err;
@@ -578,6 +580,34 @@ export class Engine {
             this.cache.set(key, p);
         }
         return this.cache.get(key);
+    }
+
+    /**
+     * A drawn area's rows with a percentile column filled in, for a query with
+     * "drawn_pct": { field: "pct", key?: "variable", value?: "value", dir?: "dir", scale?: 1 }.
+     * A query over one drawn area cannot rank it, so the column comes back empty;
+     * this fills it as the leaderboard and percentile strip rank the area: the
+     * mid-rank among the comparison type's areas (aoi.compareKind) plus itself,
+     * times scale (0.01 for a 0–1 column). Rows that are not comparable stay null.
+     */
+    async drawnPct(theme, queryName, aoi, rows) {
+        const o = theme.queries[queryName]?.drawn_pct;
+        if (!o?.field || !rows?.length || !aoi.compareKind || aoi.kind === aoi.compareKind) return rows;
+        const dist = await this.distribution(theme, queryName, aoi).catch(() => null);
+        if (!dist) return rows;
+        const key = o.key || 'variable', value = o.value || 'value', dirCol = o.dir || 'dir';
+        const byKey = new Map();
+        for (const r of dist) {
+            const v = r[value];
+            if (v === null || v === undefined || !Number.isFinite(Number(v))) continue;
+            if (!byKey.has(String(r[key]))) byKey.set(String(r[key]), []);
+            byKey.get(String(r[key])).push(Number(v));
+        }
+        return rows.map(r => {
+            const comparable = isComparable(this.config.app, theme.id, r[key], r);
+            const p = comparable ? percentileAmong(byKey.get(String(r[key])) || [], r[value], r[dirCol] ?? 1) : null;
+            return { ...r, [o.field]: p === null ? null : p * (o.scale ?? 1) };
+        });
     }
 
     _json(key, url) {
