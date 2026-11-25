@@ -606,7 +606,8 @@ export class Engine {
         return rows.map(r => {
             const comparable = isComparable(this.config.app, theme.id, r[key], r);
             const p = comparable ? percentileAmong(byKey.get(String(r[key])) || [], r[value], r[dirCol] ?? 1) : null;
-            return { ...r, [o.field]: p === null ? null : p * (o.scale ?? 1) };
+            // __not_compared names the field, so a chart can say "not compared" rather than "no data"
+            return { ...r, [o.field]: p === null ? null : p * (o.scale ?? 1), ...(!comparable && { __not_compared: o.field }) };
         });
     }
 

@@ -115,7 +115,7 @@ export function renderBarChart(container, spec, rows, stateRows) {
                 const yy = series.length === 1 ? y0 + 5 : y0 + 6 + k * 12;
                 if (v === null) {
                     const vt = el('text', { x: x(0) + 5, y: yy + bh - 1, class: 'nodata' });
-                    vt.textContent = fmt(null);
+                    vt.textContent = d.raw.__not_compared === series[k].field ? 'not compared' : fmt(null);
                     svg.appendChild(vt);
                     return;
                 }

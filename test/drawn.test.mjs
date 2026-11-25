@@ -95,6 +95,7 @@ test('drawn_pct fills a percentile column for a drawn area, leaving non-comparab
     engine.allResults = async () => all;
     const rows = await engine.run(theme, 'q', { kind: 'polygon', key: 'poly:1', compareKind: 'eco', source: 'draw' });
     assert.deepEqual(rows.map(r => r.pct), [1, 0, null]);
+    assert.deepEqual(rows.map(r => r.__not_compared), [undefined, undefined, 'pct']);
     // a named area's rows are left as they are
     const named = await engine.drawnPct(theme, 'q', { kind: 'eco', id: '1', compareKind: 'eco' }, live);
     assert.equal(named, live);
