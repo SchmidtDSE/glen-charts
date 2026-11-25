@@ -53,6 +53,8 @@ The page's own stylesheet can override the palette tokens on `:root` (see the to
 | `format` | `{ nodata: "—", pct_decimals: "auto" | 1 }` |
 | `boundary_style` | `{ fill, opacity, hover_opacity, line, line_opacity, selected, selected_width, selected_opacity, point, point_opacity }` |
 | `tracts` | `{ url, source_layer, id_prop, line_width? }` for themes that color tracts (`theme.map`). `line_width` is the cell outline width, a number or a MapLibre expression (default 0.4); use a zoom expression for cells only a pixel or two wide at the landing zoom. A list of grids, each with an `id` and a `minzoom` and/or `maxzoom`, swaps grids by zoom, e.g. a coarse H3 grid zoomed out and a fine one zoomed in; see `theme.map.levels` |
+| `area_sources` | the library's own area sources, turned on without a page script: `[{ "type": "polygon", "label": "Draw or upload an area", "description": "…", "kind_label": "Drawn area" }]`. Types `polygon` and `isochrone` (which reads `routing` and `isochrones`); `id` names the mode when there are two of one type; `compare_with` sets the area type a drawn area is ranked among; `"res": 8` (polygon) fills at resolution 8 with no `{{AOI10}}`, about 49 times fewer cells for apps whose SQL reads only `h8`, at the cost of the boundary following res-8 cells (a 50 km box keeps about 2% fewer edge cells). See [Drawn areas among an area type](#drawn-areas-among-an-area-type) |
+| `default_mode` | the area mode a link with no `#…` opens on, when there is more than one |
 | `default_area` | `{ jurisdiction, id }`: the area whose profile a link with no `#…` opens on, instead of an empty picker |
 | `live_note` | text shown when a named area has no precomputed file |
 | `project_url`, `export_css` | source link and extra CSS for the exported report |
@@ -227,7 +229,7 @@ Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{A
     "label_lines": 2 }
   ```
 
-  The rank is `rank_field` (0–100, times `rank_scale`; use 100 for a 0–1 `PERCENT_RANK`) when given, so the number on screen is the one in the exported SQL. Otherwise it is the mid-rank (share below plus half the ties), flipped where `direction_field` is negative. Without a distribution (a param value that was not precomputed) the row shows the raw value and says the rank is unavailable.
+  The rank is `rank_field` (0–100, times `rank_scale`; use 100 for a 0–1 `PERCENT_RANK`) when given, so the number on screen is the one in the exported SQL. Otherwise it is the mid-rank (share below plus half the ties), flipped where `direction_field` is negative. Without a distribution (a param value that was not precomputed) the row shows the raw value and says the rank is unavailable. A drawn area is placed among the areas of its comparison type; see [Drawn areas among an area type](#drawn-areas-among-an-area-type).
 
 ## Leaderboard
 
@@ -253,6 +255,16 @@ Template tokens in theme SQL: `{{AOI}}` (the area's res-8 cells, `h0, h8`), `{{A
 - Names in the table show the area on the map; › opens its profile. Clicking the map finds the area's row. The map colours areas by overall score.
 - `default: true` makes the leaderboard the landing view (a link without `view=leaderboard` still opens the profile it names).
 - The view and any non-default scoring are kept in the URL (`?view=leaderboard&score=scope=priority;carbon=2;carbon.irrecoverable_mt=-1`), so a re-weighted view is a link. The CSV download records the scoring it used.
+
+### Drawn areas among an area type
+
+An area from a source (a drawn or uploaded polygon, a travel-time area) is compared with one area type: the source's `compare_with` in `area_sources` (`compareWith` for `polygonSource()` and `isochroneSource()`), else the leaderboard's `jurisdiction`. `"compare_with": false` turns it off. Each theme's queries still run live over `{{AOI}}`; what the comparison adds is where the result would fall among the type's precomputed areas.
+
+- `percentile-strip` draws the type's areas as ticks and the drawn area as the dot. Its percentile counts it as one more member of the type, by the leaderboard's mid-rank rule, with direction from `direction_field` or else the row's `dir`. `rank_field` is not used, since a query over one drawn area cannot rank it.
+- With a leaderboard over that type, the profile opens with a card giving the drawn area's overall and pillar scores under the leaderboard's current weights, and the rank it would take: "3rd of 220" among 219 areas plus itself. The card shows its progress while the pillar queries run. The leaderboard gets a "Rank your own area" button (`leaderboard.draw_label` renames it) that opens the profile in the draw mode.
+- A rank column that a theme's `all` query computes (a `pct`) comes back empty from a query over one drawn area. `"drawn_pct": { "field": "pct", "key": "variable", "value": "value", "dir": "dir", "scale": 1 }` on the query fills it the same way, so bar charts and tiles on it work; `scale: 0.01` for a 0–1 column. A headline or chart that cannot apply to a drawn area (a pillar score from the `all` query, say) takes `"drawn": false` to be left off for areas from a source.
+- Only some variables compare fairly between a drawn area and whole areas: shares, means and densities do, totals do not. Mark a variable `"comparable": false` in the pillar's `variables`, or return a `comparable` column that is false in the query's rows. Such a variable shows its value without a percentile, and is left out of the drawn area's scores; the card names what it left out.
+- A drawn area's SQL sees only `{{AOI}}`, so a query whose named areas are filtered in the area type's `aoi` (a band width, say) needs the same filter in the theme SQL for drawn areas; see `example/config/themes/physical/stats.sql`.
 
 ## Chat
 
@@ -330,7 +342,7 @@ A chart type's `load(ctx)` returns its data (default: the query's rows); `ctx` i
 
 ### Area sources
 
-A source adds an area mode with its own controls. The library ships two:
+A source adds an area mode with its own controls. The library ships two, which `area_sources` in `app.json` turns on without any JavaScript:
 
 - `sources/polygon-source.js`, `polygonSource()`: draw a polygon or upload GeoJSON. Not kept in the link. A polygon smaller than one resolution-10 cell (about 1.5 ha, so many parcels) gets the cell under an interior point.
 - `sources/isochrone-source.js`, `isochroneSource()`: the area reachable from a point (map click or address search) by walking, cycling or driving within a time budget, from a [Valhalla](https://github.com/valhalla/valhalla) router. Its bands add `{{BANDS10}}` (every cell with the smallest band that reaches it), `{{ORIGIN_LAT}}` and `{{ORIGIN_LON}}` to theme SQL, and the point, mode and time are kept in the link (`#@37.8,-122.27?mode=walk&t=15`). Configured in `app.json`:

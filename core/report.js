@@ -60,7 +60,9 @@ export function renderThemeCard(engine, theme, aoi, opts = {}) {
     // items with a `when` show only at the settings it names; reference values
     // describe the region at the settings app.reference.when names (any, without it)
     const app = engine.config.app;
-    const applies = x => matchesWhen(x.when, app, params);
+    // "drawn": false leaves an item off for an area from a source (a drawn polygon), e.g. a
+    // headline on a score that only the all-areas query computes
+    const applies = x => matchesWhen(x.when, app, params) && !(x.drawn === false && aoi.source);
     if (opts.reference && !matchesWhen(opts.reference.when, app, params)) opts = { ...opts, reference: null };
     const headlines = (theme.headlines || []).filter(applies);
     const chartSpecs = (theme.charts || []).filter(applies)

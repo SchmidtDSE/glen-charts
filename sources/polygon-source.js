@@ -3,7 +3,15 @@
  * becomes an area by H3 polyfill on the query server (polygon.js), so every
  * theme's SQL runs unchanged. A drawn shape is not kept in the link.
  *
- *   createExplorer({ sources: [polygonSource()] })
+ *   createExplorer({ extensions: { sources: [polygonSource()] } })
+ *
+ * or, with no page script, in app.json:
+ *   "area_sources": [{ "type": "polygon", "label": "Draw or upload an area", "kind_label": "Drawn area" }]
+ *
+ * compareWith: the area type a drawn area is ranked among (false for none);
+ * by default the leaderboard's (see explorer.js).
+ * res: 10 (default) fills the polygon at res 10; 8 fills at res 8 with no
+ * {{AOI10}}, much faster on large areas for apps whose SQL reads only h8.
  */
 
 import { DrawTool, readGeoJsonFile } from './draw.js';
@@ -12,7 +20,7 @@ import { escapeHtml } from '../core/format.js';
 
 const HINT = 'Click to add points; double-click (or click the first point) to finish';
 
-export function polygonSource({ label = 'Draw / upload', description = 'Draw a polygon on the map or upload a GeoJSON file', kindLabel = 'Custom area' } = {}) {
+export function polygonSource({ id = 'draw', label = 'Draw / upload', description = 'Draw a polygon on the map or upload a GeoJSON file', kindLabel = 'Custom area', compareWith, res = 10 } = {}) {
     let draw = null, ctx = null, help = null;
 
     const use = (geoms, name) => {
@@ -20,16 +28,17 @@ export function polygonSource({ label = 'Draw / upload', description = 'Draw a p
         help.textContent = '';
         ctx.select();                      // make this the active source if it is not
         ctx.mapView.showShape(geoms);
-        const aoi = polygonAoi(geoms, name);
+        const aoi = polygonAoi(geoms, name, { res });
         aoi.kindLabel = kindLabel;
         ctx.setAoi(aoi);
     };
 
     return {
-        id: 'draw',
+        id,
         label,
         description,
         kindLabel,
+        ...(compareWith !== undefined && { compareWith }),
         hashable: false,
 
         mount(step, c) {

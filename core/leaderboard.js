@@ -12,7 +12,16 @@
  *   pillar score         weighted mean of its variables' percentiles
  *   overall              weighted mean of the pillar scores
  * Each pillar's query must return one row per (area, variable) with the
- * columns variable, label, value, dir (+1 or −1), and optionally fmt, unit.
+ * columns variable, label, value, dir (+1 or −1), and optionally fmt, unit
+ * and comparable (false for a total; see below).
+ *
+ * A drawn area (an area source with a comparison type, see explorer.js) is
+ * scored as one more member of the type: its percentile on each variable is
+ * the same mid-rank among the type's areas plus itself, and its implied rank
+ * is its place among them all ("34th of 220"). Variables that do not compare
+ * between areas of different sizes, such as totals, are left out of its
+ * percentiles and scores: "comparable": false on the variable in the pillar's
+ * `variables`, or a comparable column that is false in the query's rows.
  *
  * app.json:
  *   "leaderboard": {
@@ -20,7 +29,8 @@
  *     "tab": "Leaderboard", "profile_tab": "Profile", "default": true to land on it,
  *     "title", "intro" (HTML),
  *     "pillars": [{ "theme": "carbon", "query": "carbon", "weight": 1,
- *                   "variables": { "<variable>": { "weight": 0 to switch off by default, "reverse": true } } }],
+ *                   "variables": { "<variable>": { "weight": 0 to switch off by default, "reverse": true,
+                                                  "comparable": false to leave it out of a drawn area's scores } } }],
  *     "overall": { "label": "Overall", "note": "…" },
  *     "scope": { "theme": "priority", "query": "priority", "field": "priority_share", "min": 0.5,
  *                "detail_field"?, "label": "Priority countries", "global_label": "Global", "column"?: "Priority", "note"? },
@@ -31,7 +41,7 @@
  * explorer puts in the URL, so a re-weighted view is a shareable link.
  */
 
-import { fmt, escapeHtml, isMissing } from './format.js';
+import { fmt, escapeHtml, isMissing, ordinal } from './format.js';
 import { hover } from './charts.js';
 
 const MAX_W = 3;
@@ -39,7 +49,8 @@ const MAX_W = 3;
 export class Leaderboard {
     /**
      * ctx: { engine, spec, jur, onShow(feature), onOpen(feature), onHover(id|null),
-     *        onScores({ rows, inScope }), onChange() }
+     *        onScores({ rows, inScope }), onChange(),
+     *        drawSources: [{ id, label, description }] ranked among this type, onDraw(id) }
      */
     constructor(el, ctx) {
         Object.assign(this, { el, ctx });
@@ -70,15 +81,7 @@ export class Leaderboard {
     }
 
     setStateString(str) {
-        this.state = defaultState(this.spec);
-        for (const part of String(str || '').split(';').filter(Boolean)) {
-            const [k, v] = part.split('=');
-            if (k === 'scope') { if (v === 'priority' || v === 'global') this.state.scope = v; continue; }
-            const n = Number(v);
-            if (!Number.isFinite(n)) continue;
-            if (k.includes('.')) this.state.vars[k] = { w: clampW(Math.abs(n)), rev: v.startsWith('-') };
-            else this.state.pillars[k] = clampW(n);
-        }
+        this.state = parseState(this.spec, str);
         if (this.data) for (const [k, v] of Object.entries(fillVars(this.data, this.spec))) this.state.vars[k] ??= v;
     }
 
@@ -129,6 +132,7 @@ export class Leaderboard {
                     <h2>${escapeHtml(spec.title || `All ${peers}, ranked`)}</h2>
                 </div>
                 <div class="head-actions">
+                    ${(this.ctx.drawSources || []).map(s => `<button class="ghost-btn lb-draw" type="button" data-source="${escapeHtml(s.id)}" title="${escapeHtml(s.description || s.label)}, and see where it would rank here">${escapeHtml(this.ctx.drawSources.length > 1 ? s.label : spec.draw_label || 'Rank your own area')}</button>`).join('')}
                     <button class="ghost-btn" id="lb-csv" type="button" title="Download the table as CSV" disabled>CSV</button>
                     <button class="ghost-btn" id="copy-link" type="button" title="Copy a link to this view, scoring included">Copy link</button>
                 </div>
@@ -140,6 +144,7 @@ export class Leaderboard {
         this.el.querySelector('#copy-link').onclick = async () => {
             try { await navigator.clipboard.writeText(location.href); this.el.querySelector('#copy-link').textContent = 'Copied'; } catch { /* ignore */ }
         };
+        this.el.querySelectorAll('.lb-draw').forEach(b => { b.onclick = () => this.ctx.onDraw?.(b.dataset.source); });
     }
 
     renderBody() {
@@ -382,7 +387,21 @@ export class Leaderboard {
 
 /* ------------------------------------------------------------- scoring */
 
-function defaultState(spec) {
+/** A scoring state from its link string (see stateString); unknown variables keep their defaults. */
+export function parseState(spec, str) {
+    const state = defaultState(spec);
+    for (const part of String(str || '').split(';').filter(Boolean)) {
+        const [k, v] = part.split('=');
+        if (k === 'scope') { if (v === 'priority' || v === 'global') state.scope = v; continue; }
+        const n = Number(v);
+        if (!Number.isFinite(n)) continue;
+        if (k.includes('.')) state.vars[k] = { w: clampW(Math.abs(n)), rev: v.startsWith('-') };
+        else state.pillars[k] = clampW(n);
+    }
+    return state;
+}
+
+export function defaultState(spec) {
     const pillars = {}, vars = {};
     for (const p of spec.pillars || []) {
         pillars[p.theme] = clampW(p.weight ?? 1);
@@ -402,7 +421,7 @@ function fillVars(data, spec) {
     return vars;
 }
 
-async function loadData(engine, spec, jur, params) {
+export async function loadData(engine, spec, jur, params) {
     const themes = engine.config.themeById;
     const aoi = { kind: jur.id, params };
     const pillarSpecs = (spec.pillars || []).map(p => {
@@ -423,7 +442,8 @@ async function loadData(engine, spec, jur, params) {
     const pillars = pillarSpecs.map((p, i) => {
         const vars = new Map();
         for (const rows of Object.values(results[i] || {})) for (const r of rows) {
-            if (!vars.has(r.variable)) vars.set(r.variable, { variable: r.variable, key: `${p.theme.id}.${r.variable}`, label: r.label || r.variable, unit: r.unit, fmt: r.fmt, dir: Number(r.dir) || 0 });
+            if (!vars.has(r.variable)) vars.set(r.variable, { variable: r.variable, key: `${p.theme.id}.${r.variable}`, label: r.label || r.variable, unit: r.unit, fmt: r.fmt, dir: Number(r.dir) || 0, comparable: p.variables?.[r.variable]?.comparable !== false });
+            if (isFalse(r.comparable)) vars.get(r.variable).comparable = false;
         }
         for (const v of vars.values()) if (!v.dir) throw new Error(`Leaderboard: ${p.theme.id} rows need a dir column (+1 or −1)`);
         return { theme: p.theme, query: p.query, label: p.label || p.theme.label, color: p.color || p.theme.color || 'var(--primary)', variables: [...vars.values()], byId: results[i] || {} };
@@ -495,6 +515,132 @@ export function midRank(pts) {
         i = j + 1;
     }
     return out;
+}
+
+/* ---------------------------------------------------------- drawn area */
+
+/** A comparable column or option that says no: false, 0, 'false', 'no'. */
+export const isFalse = x => x === false || x === 0 || (typeof x === 'string' && /^(false|no|0)$/i.test(x.trim()));
+
+/**
+ * Whether a variable compares between a drawn area and whole areas of a type:
+ * not when the leaderboard marks it "comparable": false for that theme, or its
+ * row carries a comparable column that is false.
+ */
+export function isComparable(app, themeId, variable, row = null) {
+    if (row && isFalse(row.comparable)) return false;
+    const p = (app?.leaderboard?.pillars || []).find(x => x.theme === themeId);
+    return p?.variables?.[variable]?.comparable !== false;
+}
+
+/**
+ * Percentile (0–100, to 0.1) of `v` as one more member of `vals`, by the
+ * leaderboard's mid-rank rule, with dir −1 when lower is better. Null without
+ * a value or with nothing to compare against.
+ */
+export function percentileAmong(vals, v, dir = 1) {
+    if (v === null || v === undefined || !Number.isFinite(Number(v)) || !vals.length) return null;
+    const d = Number(dir) < 0 ? -1 : 1;
+    const pts = vals.map((x, i) => ({ id: i, x: d * x }));
+    pts.push({ id: 'me', x: d * Number(v) });
+    return midRank(pts).get('me');
+}
+
+/**
+ * Score a drawn area as one more member of the leaderboard's areas.
+ *   data   loadData()'s result for the comparison type
+ *   vals   { "<theme>.<variable>": value } for the drawn area; variables that
+ *          are not comparable must already be left out (or null)
+ *   state  the leaderboard's scoring state
+ * Returns { overall, rank, of, partial, pct: { key: pct }, pillars: { theme: { score, rank, of } } },
+ * with ranks among the type's areas in view plus the drawn area.
+ */
+export function scoreDrawn(data, vals, state, spec) {
+    const me = { id: '__drawn__', name: '', vals, inScope: true, share: null };
+    const res = score({ ...data, rows: [...data.rows, me] }, state, spec);
+    const mine = res.rows.find(r => r.id === me.id);
+    const inView = res.rows.filter(r => r.inView);
+    const pillars = {};
+    for (const p of data.pillars) {
+        const sc = mine.pillars[p.theme.id];
+        const others = inView.map(r => r.pillars[p.theme.id]).filter(x => x !== null && x !== undefined);
+        pillars[p.theme.id] = { score: sc ?? null, rank: sc === null || sc === undefined ? null : 1 + others.filter(x => x > sc).length, of: others.length };
+    }
+    return { overall: mine.overall, rank: mine.rank, of: res.ranked, partial: mine.partial, pct: mine.pct, pillars };
+}
+
+/**
+ * The profile card for a drawn area: its overall and pillar scores among the
+ * leaderboard's areas, and the rank it would take, from each pillar's query
+ * run live over the area.
+ *   ctx: { engine, spec, jur, aoi, state, isCurrent(), paramNote, genericLabels: labels that
+ *          only name the kind of area (e.g. "Drawn area"), written as "this area" }
+ */
+export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () => true, paramNote = '', genericLabels = [] }) {
+    const card = document.createElement('section');
+    card.className = 'card lb-drawn';
+    const peers = jur.peer_label || jur.label.toLowerCase();
+    const overallLabel = spec.overall?.label || 'Overall';
+    card.innerHTML = `
+        <div class="card-head"><h3>Among ${escapeHtml(peers)}</h3></div>
+        <p class="card-blurb">Where ${!aoi.label || genericLabels.includes(aoi.label) ? 'this area' : `“${escapeHtml(aoi.label)}”`} would rank if it were one of the ${escapeHtml(peers)}, scored as on the ${escapeHtml((spec.tab || 'leaderboard').toLowerCase())}.</p>
+        <div class="lb-drawn-body"><div class="tile-note lb-drawn-progress">Loading the ${escapeHtml(peers)}…</div></div>`;
+    const body = card.querySelector('.lb-drawn-body');
+    const progress = card.querySelector('.lb-drawn-progress');
+    (async () => {
+        const params = aoi.params || {};
+        const data = await loadData(engine, spec, jur, params);
+        if (!isCurrent()) return;
+        if (!data.rows.length) { body.innerHTML = `<p class="tile-note">The ${escapeHtml(peers)} are not precomputed at this setting, so there is nothing to rank against.</p>`; return; }
+        let done = 0;
+        const n = data.pillars.length;
+        const tick = () => { progress.textContent = `Running ${n - done} of ${n} ${n === 1 ? 'query' : 'queries'} over this area…`; };
+        tick();
+        const results = await Promise.all(data.pillars.map(p => engine.run(p.theme, p.query, aoi)
+            .then(rows => rows, err => { console.error(err, err.sql); return null; })
+            .finally(() => { done++; if (isCurrent()) tick(); })));
+        if (!isCurrent()) return;
+        const vals = {}, left = [];
+        data.pillars.forEach((p, i) => {
+            const byVar = new Map((results[i] || []).map(r => [r.variable, r]));
+            for (const v of p.variables) {
+                const r = byVar.get(v.variable);
+                if (!v.comparable || (r && isFalse(r.comparable))) { left.push(v.label); continue; }
+                if (r && !isMissing(r.value)) vals[v.key] = Number(r.value);
+            }
+        });
+        const failed = data.pillars.filter((p, i) => !results[i]).map(p => p.label);
+        const res = scoreDrawn(data, vals, state, spec);
+        const scope = state.scope === 'priority' && spec.scope ? ` (${escapeHtml(spec.scope.label || 'priority')})` : '';
+        body.innerHTML = `
+            <div class="lb-drawn-head">
+                <div class="tile"><div class="tile-label">${escapeHtml(overallLabel)} score</div><div class="tile-value">${fmt(res.overall, 'num1')}${res.partial && res.overall !== null ? '*' : ''}</div></div>
+                <div class="tile"><div class="tile-label">Would rank</div><div class="tile-value">${res.rank ? `${ordinal(res.rank)}` : '—'}</div>
+                    <div class="tile-compare">${res.rank ? `of ${res.of} ${escapeHtml(peers)}${scope}, with this area` : 'No comparable values'}</div></div>
+            </div>
+            <table class="lb-drawn-table"><tbody>
+                ${data.pillars.map(p => {
+                    const ps = res.pillars[p.theme.id];
+                    // a pillar whose weighted variables are all left out says why it has no score
+                    const none = ps.score === null && !p.variables.some(v => v.comparable && (state.vars[v.key]?.w ?? 1) > 0);
+                    const why = none ? `<td colspan="2" class="lb-drawn-none">No comparable variables at these weights${p.variables.some(v => v.comparable) ? '; switch one on under Scoring' : ''}</td>`
+                        : `${bar(ps.score, p.color)}<td class="num rank">${ps.rank ? `${ordinal(ps.rank)} of ${ps.of}` : ''}</td>`;
+                    return `<tr style="--c:${p.color}"><th><span class="dot"></span>${escapeHtml(p.label)}</th>${why}</tr>`;
+                }).join('')}
+            </tbody></table>
+            <p class="tile-note">${[
+                paramNote ? escapeHtml(paramNote) + '.' : '',
+                'Scores use the leaderboard’s current weights; a percentile counts this area as one more of the ' + escapeHtml(peers) + '.',
+                left.length ? `Left out as not comparable with whole areas: ${escapeHtml(left.join(', '))}.` : '',
+                failed.length ? `Query failed: ${escapeHtml(failed.join(', '))}.` : '',
+                res.partial && res.overall !== null ? '* Some pillars have no comparable data here; the overall score uses those present.' : '',
+            ].filter(Boolean).join(' ')}</p>`;
+    })().catch(err => {
+        if (!isCurrent()) return;
+        body.innerHTML = `<div class="err">Could not rank this area: ${escapeHtml(err.message)}</div>`;
+        console.error(err);
+    });
+    return card;
 }
 
 /* ------------------------------------------------------------- helpers */
@@ -610,5 +756,16 @@ export const leaderboardCss = `
 .lb-table td.share.on { color: var(--text); }
 .lb-table td.share .badge { color: var(--badge, #1f5f8b); font-size: 9px; margin-right: 4px; vertical-align: 1px; }
 .lb-open { border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; color: var(--text-2); }
+.lb-drawn .lb-drawn-head { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.lb-drawn .lb-drawn-head .tile { flex: 1 1 140px; }
+.lb-drawn-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.lb-drawn-table th { text-align: left; font-weight: 500; padding: 3px 5px 3px 0; }
+.lb-drawn-table th .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+.lb-drawn-table td { padding: 3px 5px; border-top: 1px solid var(--line); }
+.lb-drawn-table td.bar { white-space: nowrap; }
+.lb-drawn-table td.bar .track { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--line); vertical-align: middle; margin-right: 6px; overflow: hidden; }
+.lb-drawn-table td.bar .track i { display: block; height: 100%; background: var(--c); }
+.lb-drawn-table td.lb-drawn-none { color: var(--text-3); font-size: 12px; }
+.lb-drawn-table td.rank { text-align: right; color: var(--text-2); white-space: nowrap; }
 .lb-open:hover { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 `;
