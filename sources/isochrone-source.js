@@ -195,6 +195,11 @@ export function isochroneSource({ id = 'reach', label = 'Travel time', descripti
             if (!restoring && !st.origin) ctx.showHint(hint());
         },
 
+        /** Kept for a return from the leaderboard: stop taking map clicks, keep the bands. */
+        pause() {
+            active = false;
+        },
+
         deactivate() {
             active = false;
             st.token++;
