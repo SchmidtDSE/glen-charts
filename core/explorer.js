@@ -563,12 +563,16 @@ class Explorer {
                 this.renderTags();
             } catch (err) { console.error(err); }
         }
-        if (s.view === 'leaderboard' && this.lb) this.lb.load(s.params, this.paramNote());
         const a = this.state.aoi;
-        if (!a) { this.writeHash(); return; }
-        if (a.kind === 'state') this.setAoi(statewideAoi(this.config.app, this.state.params));
+        if (!a) this.writeHash();
+        else if (a.kind === 'state') this.setAoi(statewideAoi(this.config.app, this.state.params));
         else if (this.state.jur && this.chosen().length) this.setAoi(this.areaAoi());
         else this.setAoi({ ...a, key: `${a.key.split('@')[0]}@${paramKey(this.config.app, this.state.params)}`, params: this.state.params });
+        // after the area takes the new setting, so a drawn area's row is scored at it
+        if (s.view === 'leaderboard' && this.lb) {
+            this.lb.setDrawn(this.drawnForLeaderboard(), this.drawnLabel());
+            this.lb.load(s.params, this.paramNote());
+        }
     }
 
     renderThemeButtons() {
@@ -606,10 +610,25 @@ class Explorer {
         this.el.querySelectorAll('#source-steps [data-source]').forEach(s => { s.hidden = s.dataset.source !== id; });
     }
 
-    async setMode(id, { keepFeature = false, restoring = false } = {}) {
+    /**
+     * pause: leaving a source for the leaderboard keeps its area (and its shape on
+     * the map) so the profile can return to it: the source is paused (its pause(),
+     * if it has one: stop drawing, stop taking map clicks) rather than deactivated.
+     * Any other change of mode ends a paused source.
+     */
+    async setMode(id, { keepFeature = false, restoring = false, pause = false } = {}) {
         const s = this.state;
         const prevSource = this.ext.sources.find(x => x.id === s.mode);
-        if (prevSource && prevSource.id !== id) prevSource.deactivate();
+        if (prevSource && prevSource.id !== id) {
+            if (pause && prevSource.pause && s.aoi?.source === prevSource.id) { prevSource.pause(); this.pausedSource = prevSource; }
+            else {
+                prevSource.deactivate();
+                // its area goes with it, so no other mode shows it under its own heading
+                if (s.aoi?.source === prevSource.id) { s.aoi = null; s.token++; }
+            }
+        }
+        if (this.pausedSource && !pause && this.pausedSource.id !== id) this.endPausedSource();
+        if (this.pausedSource?.id === id) this.pausedSource = null;
         if (id === null) { this.markMode(null); this.renderIntro(); return; }
         if (id === 'state') {
             s.mode = 'state'; s.jur = null; s.feature = null; s.picked = [];
@@ -957,7 +976,7 @@ class Explorer {
      * clicked there (on the map or by name), so the profile shows the area the
      * map just zoomed to. Callers that choose an area themselves pass false.
      */
-    async setView(view, { lbState = null, carry = true } = {}) {
+    async setView(view, { lbState = null, carry = true, resume = true } = {}) {
         const spec = this.config.app.leaderboard;
         if (!this.views().some(v => v.id === view)) view = 'profile';
         const s = this.state;
@@ -970,7 +989,7 @@ class Explorer {
             await this.renderCustomView(custom);
         } else if (view === 'leaderboard') {
             const jur = this.leaderboardJur();
-            if (s.mode !== jur.id) await this.setMode(jur.id, { keepFeature: true });
+            if (s.mode !== jur.id) await this.setMode(jur.id, { keepFeature: true, pause: true });
             this.hideHint();
             this.mapView.clearChoropleth();
             this.$('#map-chips').hidden = true;
@@ -981,13 +1000,14 @@ class Explorer {
                         const bbox = ['xmin', 'ymin', 'xmax', 'ymax'].map(k => Number(f[k]));
                         this.mapView.select(f.id, bbox);
                     },
-                    onOpen: f => { this.setView('profile', { carry: false }).then(() => this.pick(f, { replace: true })); },
+                    onOpen: f => { this.setView('profile', { carry: false, resume: false }).then(() => this.pick(f, { replace: true })); },
                     onHover: id => this.mapView.highlight(id),
                     onScores: res => this.colorByScore(res),
                     onChange: () => this.writeHash(),
                     // sources whose areas are ranked among this type: a button to draw one
                     drawSources: this.ext.sources.filter(x => this.compareKindFor(x) === jur.id),
-                    onDraw: id => { this.setView('profile', { carry: false }).then(() => this.setMode(id)); },
+                    onDraw: id => { this.setView('profile', { carry: false, resume: false }).then(() => this.setMode(id)); },
+                    onOpenDrawn: () => this.setView('profile', { carry: false }),
                 });
                 this.mapView.popupExtra = id => (this.state.view === 'leaderboard' ? this.lb.popupFor(id) : '');
             }
@@ -996,11 +1016,25 @@ class Explorer {
             this.lb.el = this.$('#report');
             this.lbFocusAtEntry = this.lb.focusId;
             this.mapView.clearSelection();
+            this.lb.setDrawn(this.drawnForLeaderboard(), this.drawnLabel());
             await this.lb.load(s.params, this.paramNote());
         } else {
             this.mapView.setJurisdictionColors(null);
             this.$('#map-legend').hidden = true;
             const carried = carry && from === 'leaderboard' ? this.leaderboardFocus() : null;
+            // back from the leaderboard to an area from a source: that source and area again
+            const paused = this.pausedSource;
+            if (paused) {
+                if (!carried && resume && s.aoi?.source === paused.id) {
+                    await this.setMode(paused.id, { restoring: true });
+                    this.renderTags();
+                    this.renderSummary();
+                    this.renderReport();
+                    this.writeHash();
+                    return;
+                }
+                this.endPausedSource();
+            }
             if (carried) { this.pick(carried); this.renderTags(); this.writeHash(); return; }
             const ids = this.chosen().map(f => f.id);
             if (ids.length) this.mapView.select(s.jur?.multiple ? ids : ids[0]); else this.mapView.clearSelection();
@@ -1008,6 +1042,27 @@ class Explorer {
             if (s.aoi) this.renderReport(); else this.renderIntro();
         }
         this.writeHash();
+    }
+
+    /** Deactivate a source paused for the leaderboard, dropping its area. */
+    endPausedSource() {
+        const p = this.pausedSource;
+        this.pausedSource = null;
+        if (!p) return;
+        p.deactivate();
+        if (this.state.aoi?.source === p.id) { this.state.aoi = null; this.state.token++; }
+    }
+
+    /** The area from a paused source that the leaderboard shows as a row: one compared with its type. */
+    drawnForLeaderboard() {
+        const a = this.state.aoi;
+        return this.pausedSource && a?.source === this.pausedSource.id && a.compareKind === this.leaderboardJur().id ? a : null;
+    }
+
+    /** The drawn area's name for the leaderboard row: its own name, or "Your area" for a default label. */
+    drawnLabel() {
+        const a = this.state.aoi, src = this.pausedSource;
+        return !a?.label || a.label === 'Drawn area' || a.label === src?.kindLabel ? 'Your area' : a.label;
     }
 
     paramNote() {

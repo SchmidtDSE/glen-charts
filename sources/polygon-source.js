@@ -76,6 +76,12 @@ export function polygonSource({ id = 'draw', label = 'Draw / upload', descriptio
             ctx?.mapView.clearShape();
         },
 
+        /** Kept for a return from the leaderboard: stop drawing, keep the shape. */
+        pause() {
+            draw?.cancel();
+            ctx?.hideHint();
+        },
+
         describe: () => escapeHtml(kindLabel),
     };
 }

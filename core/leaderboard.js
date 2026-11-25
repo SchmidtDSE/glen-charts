@@ -50,7 +50,8 @@ export class Leaderboard {
     /**
      * ctx: { engine, spec, jur, onShow(feature), onOpen(feature), onHover(id|null),
      *        onScores({ rows, inScope }), onChange(),
-     *        drawSources: [{ id, label, description }] ranked among this type, onDraw(id) }
+     *        drawSources: [{ id, label, description }] ranked among this type, onDraw(id),
+     *        onOpenDrawn() for the drawn area's row (see setDrawn) }
      */
     constructor(el, ctx) {
         Object.assign(this, { el, ctx });
@@ -62,6 +63,19 @@ export class Leaderboard {
         this.focusId = null;
         this.state = defaultState(this.spec);
         this.token = 0;
+        this.drawnAoi = null;      // an area from a source, shown as one more row (setDrawn)
+        this.drawn = null;         // its values once its queries have run
+    }
+
+    /**
+     * An area from a source (a drawn polygon) to show in the table at the rank
+     * it would take, scored as the profile's card scores it; null for none.
+     * Takes effect at the next load().
+     */
+    setDrawn(aoi, label = null) {
+        if (aoi?.key !== this.drawnAoi?.key) this.drawn = null;
+        this.drawnAoi = aoi;
+        this.drawnLabel = label || aoi?.label || 'Drawn area';
     }
 
     /* ------------------------------------------------------------ state */
@@ -101,6 +115,7 @@ export class Leaderboard {
                 this.state.vars[v.key] ??= { ...defaultVar(this.spec, p.theme.id, v.variable) };
             }
             this.renderBody();
+            this.loadDrawn(token);
         } catch (err) {
             if (token !== this.token) return;
             this.el.querySelector('.lb-card').innerHTML = `<div class="err">Could not build the leaderboard: ${escapeHtml(err.message)}</div>`;
@@ -108,9 +123,36 @@ export class Leaderboard {
         }
     }
 
+    /** Run the drawn area's queries (cached by the engine, so shared with its profile), then add its row. */
+    async loadDrawn(token) {
+        const aoi = this.drawnAoi;
+        if (!aoi) { this.drawn = null; return; }
+        const note = this.el.querySelector('.lb-drawn-note');
+        if (note) note.textContent = `Running the queries for ${this.drawnLabel}…`;
+        try {
+            const [v, sc] = await Promise.all([drawnValues(this.ctx.engine, this.data, aoi), drawnScope(this.ctx.engine, this.spec, aoi)]);
+            if (token !== this.token || aoi !== this.drawnAoi) return;
+            this.drawn = { ...v, ...sc };
+            this.renderTable();
+        } catch (err) {
+            console.error(err);
+            if (note && token === this.token) note.textContent = `Could not score ${this.drawnLabel}: ${err.message}`;
+        }
+    }
+
     /** Scores for the current state, and for the default state in the same scope (for rank changes). */
     compute() {
         const cur = score(this.data, this.state, this.spec);
+        // the drawn area at the rank it would take; the other areas' scores and ranks are without it
+        if (this.drawn) {
+            const d = scoreDrawn(this.data, this.drawn.vals, this.state, this.spec, { inScope: this.drawn.inScope });
+            cur.drawn = {
+                id: '__drawn__', drawn: true, name: this.drawnLabel, rank: d.rank, of: d.of, overall: d.overall, partial: d.partial,
+                pillars: Object.fromEntries(Object.entries(d.pillars).map(([k, p]) => [k, p.score])),
+                share: this.drawn.share, detail: this.drawn.detail, inScope: this.drawn.inScope,
+                inView: this.state.scope !== 'priority' || !this.spec.scope || this.drawn.inScope,
+            };
+        }
         const def = score(this.data, { ...defaultState(this.spec), scope: this.state.scope, vars: fillVars(this.data, this.spec) }, this.spec);
         const defRank = new Map(def.rows.map(r => [r.id, r.rank]));
         for (const r of cur.rows) {
@@ -280,7 +322,8 @@ export class Leaderboard {
                     </tr></thead>
                     <tbody></tbody>
                 </table></div>
-                <p class="tile-note lb-note"></p>`;
+                <p class="tile-note lb-note"></p>
+                <p class="tile-note lb-drawn-note"></p>`;
             card.querySelectorAll('th[data-sort]').forEach(th => {
                 th.onclick = () => {
                     const k = th.dataset.sort;
@@ -293,6 +336,7 @@ export class Leaderboard {
             const tbody = card.querySelector('tbody');
             tbody.addEventListener('click', e => {
                 const tr = e.target.closest('tr');
+                if (tr?.dataset.id === '__drawn__') { if (e.target.closest('button')) this.ctx.onOpenDrawn?.(); return; }
                 const r = tr && this.byId.get(tr.dataset.id);
                 if (!r) return;
                 if (e.target.closest('.lb-open')) this.ctx.onOpen?.(r.feature);
@@ -303,7 +347,7 @@ export class Leaderboard {
                 const r = tr && this.byId.get(tr.dataset.id);
                 if (r && e.key === 'Enter') { this.focus(r.id, { scroll: false }); this.ctx.onShow?.(r.feature); }
             });
-            tbody.addEventListener('mouseover', e => { const tr = e.target.closest('tr'); if (tr) this.ctx.onHover?.(tr.dataset.id); });
+            tbody.addEventListener('mouseover', e => { const tr = e.target.closest('tr'); if (tr && tr.dataset.id !== '__drawn__') this.ctx.onHover?.(tr.dataset.id); });
             tbody.addEventListener('mouseleave', () => this.ctx.onHover?.(null));
             const csv = this.el.querySelector('#lb-csv');
             csv.disabled = false;
@@ -315,6 +359,15 @@ export class Leaderboard {
             `${rows.some(r => r.partial && r.inView) ? ' * Some pillars have no data here; the overall score uses those present.' : ''}` +
             ` Click a name to see it on the map; › opens its ${(spec.profile_tab || 'profile').toLowerCase()}.`;
         this.byId = new Map(rows.map(r => [r.id, r]));
+        const dn = card.querySelector('.lb-drawn-note');
+        const d = res.drawn;
+        if (dn && this.drawnAoi) {
+            const scopeLabel = escapeHtml(sc?.label || 'priority');
+            dn.innerHTML = !d ? (this.drawn ? '' : dn.innerHTML)
+                : !d.inView ? `<b>${escapeHtml(d.name)}</b> (your area) is outside the ${scopeLabel} list${d.share !== null ? ` (${fmt(d.share, 'pct')})` : ''}, so it is not in this view.`
+                : d.rank ? `<b>${escapeHtml(d.name)}</b> (your area) would rank ${d.rank} of ${d.of} with itself counted; the other ranks are without it. Its percentiles count it as one more of the ${escapeHtml(peers)}, and leave out variables that do not compare with whole areas.`
+                : `<b>${escapeHtml(d.name)}</b> (your area) has no comparable values to rank at these weights.`;
+        }
         this.drawRows();
     }
 
@@ -326,7 +379,10 @@ export class Leaderboard {
         const sc = this.spec.scope;
         const q = this.q.trim().toLowerCase();
         const shown = rows.filter(r => r.inView && (!q || String(r.name).toLowerCase().includes(q)));
-        const val = (r, k) => k === 'rank' ? (r.rank ?? Infinity) : k === 'name' ? r.name : k === 'overall' ? r.overall
+        // the drawn area stays in view whatever the filter, just above the area holding its rank
+        const drawn = this.result.drawn;
+        if (drawn?.inView && drawn.rank) shown.push(drawn);
+        const val = (r, k) => k === 'rank' ? (r.drawn ? r.rank - 0.5 : r.rank ?? Infinity) : r.drawn && k === 'delta' ? null : k === 'name' ? r.name : k === 'overall' ? r.overall
             : k === 'delta' ? r.delta : k === 'share' ? r.share : r.pillars[k.slice(2)];
         const { key, dir } = this.sort;
         shown.sort((a, b) => {
@@ -336,7 +392,7 @@ export class Leaderboard {
             if (vb === null || vb === undefined) return -1;
             return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * dir;
         });
-        tbody.innerHTML = shown.map(r => `
+        tbody.innerHTML = shown.map(r => r.drawn ? drawnRow(r, pillars, sc, this.spec) : `
             <tr data-id="${escapeHtml(r.id)}" tabindex="0" class="${r.id === this.focusId ? 'focus' : ''}">
                 <td class="num rank">${r.rank ?? ''}</td>
                 <td class="num delta ${r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : ''}">${r.delta > 0 ? '↑' + r.delta : r.delta < 0 ? '↓' + -r.delta : ''}</td>
@@ -346,7 +402,8 @@ export class Leaderboard {
                 ${sc ? shareCell(r, sc) : ''}
                 <td class="open"><button type="button" class="lb-open" title="Open ${escapeHtml((this.spec.profile_tab || 'profile').toLowerCase())}">›</button></td>
             </tr>`).join('');
-        card.querySelector('.lb-count').textContent = shown.length === this.result.inView ? '' : `${shown.length} of ${this.result.inView}`;
+        const nShown = shown.length - (shown.includes(drawn) ? 1 : 0);
+        card.querySelector('.lb-count').textContent = nShown === this.result.inView ? '' : `${nShown} of ${this.result.inView}`;
         card.querySelectorAll('th').forEach(th => {
             th.removeAttribute('aria-sort');
             if (th.dataset.sort === key) th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending');
@@ -547,26 +604,64 @@ export function percentileAmong(vals, v, dir = 1) {
 }
 
 /**
+ * A drawn area's values for the leaderboard's variables, from each pillar's
+ * query run live over it: { vals, left (labels not comparable), failed (pillar labels) }.
+ * onDone() is called as each query finishes.
+ */
+export async function drawnValues(engine, data, aoi, onDone = () => {}) {
+    const results = await Promise.all(data.pillars.map(p => engine.run(p.theme, p.query, aoi)
+        .then(rows => rows, err => { console.error(err, err.sql); return null; })
+        .finally(onDone)));
+    const vals = {}, left = [];
+    data.pillars.forEach((p, i) => {
+        const byVar = new Map((results[i] || []).map(r => [r.variable, r]));
+        for (const v of p.variables) {
+            const r = byVar.get(v.variable);
+            if (!v.comparable || (r && isFalse(r.comparable))) { left.push(v.label); continue; }
+            if (r && !isMissing(r.value)) vals[v.key] = Number(r.value);
+        }
+    });
+    return { vals, left, failed: data.pillars.filter((p, i) => !results[i]).map(p => p.label) };
+}
+
+/** A drawn area's place in the leaderboard's scope, by the same rule as its areas: { share, detail, inScope }. */
+export async function drawnScope(engine, spec, aoi) {
+    const sc = spec.scope;
+    const theme = sc && engine.config.themeById[sc.theme];
+    if (!theme) return { share: null, detail: null, inScope: true };
+    const row = (await engine.run(theme, sc.query || Object.keys(theme.queries)[0], aoi).catch(() => null))?.[0];
+    const share = row && !isMissing(row[sc.field]) ? Number(row[sc.field]) : null;
+    return { share, detail: row && sc.detail_field ? row[sc.detail_field] : null, inScope: share !== null && share >= (sc.min ?? 0.5) };
+}
+
+/**
  * Score a drawn area as one more member of the leaderboard's areas.
  *   data   loadData()'s result for the comparison type
  *   vals   { "<theme>.<variable>": value } for the drawn area; variables that
  *          are not comparable must already be left out (or null)
  *   state  the leaderboard's scoring state
- * Returns { overall, rank, of, partial, pct: { key: pct }, pillars: { theme: { score, rank, of } } },
- * with ranks among the type's areas in view plus the drawn area.
+ * Returns { overall, rank, of, partial, pct: { key: pct }, pillars: { theme: { score, rank, of } } }.
+ * Its own percentiles count it as one more member; its rank is its place among
+ * the areas' scores as the leaderboard shows them (without it), so it is
+ * 1 + the number of areas in view that score higher, of their count + 1.
+ * inScope: false leaves it out of a priority-scope view (overall and rank null).
  */
-export function scoreDrawn(data, vals, state, spec) {
-    const me = { id: '__drawn__', name: '', vals, inScope: true, share: null };
+export function scoreDrawn(data, vals, state, spec, { inScope = true } = {}) {
+    const me = { id: '__drawn__', name: '', vals, inScope, share: null };
     const res = score({ ...data, rows: [...data.rows, me] }, state, spec);
     const mine = res.rows.find(r => r.id === me.id);
-    const inView = res.rows.filter(r => r.inView);
+    const shown = score(data, state, spec).rows.filter(r => r.inView);
+    const place = (x, get) => {
+        const others = shown.map(get).filter(v => v !== null && v !== undefined);
+        return x === null || x === undefined || !mine.inView ? { rank: null, of: others.length + 1 } : { rank: 1 + others.filter(v => v > x).length, of: others.length + 1 };
+    };
     const pillars = {};
     for (const p of data.pillars) {
-        const sc = mine.pillars[p.theme.id];
-        const others = inView.map(r => r.pillars[p.theme.id]).filter(x => x !== null && x !== undefined);
-        pillars[p.theme.id] = { score: sc ?? null, rank: sc === null || sc === undefined ? null : 1 + others.filter(x => x > sc).length, of: others.length };
+        const sc = mine.pillars[p.theme.id] ?? null;
+        pillars[p.theme.id] = { score: sc, ...place(sc, r => r.pillars[p.theme.id]) };
     }
-    return { overall: mine.overall, rank: mine.rank, of: res.ranked, partial: mine.partial, pct: mine.pct, pillars };
+    const o = place(mine.overall, r => r.overall);
+    return { overall: mine.overall, rank: o.rank, of: o.of, partial: mine.partial, pct: mine.pct, pillars };
 }
 
 /**
@@ -596,22 +691,16 @@ export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () =>
         const n = data.pillars.length;
         const tick = () => { progress.textContent = `Running ${n - done} of ${n} ${n === 1 ? 'query' : 'queries'} over this area…`; };
         tick();
-        const results = await Promise.all(data.pillars.map(p => engine.run(p.theme, p.query, aoi)
-            .then(rows => rows, err => { console.error(err, err.sql); return null; })
-            .finally(() => { done++; if (isCurrent()) tick(); })));
+        const [{ vals, left, failed }, sc] = await Promise.all([
+            drawnValues(engine, data, aoi, () => { done++; if (isCurrent()) tick(); }),
+            drawnScope(engine, spec, aoi),
+        ]);
         if (!isCurrent()) return;
-        const vals = {}, left = [];
-        data.pillars.forEach((p, i) => {
-            const byVar = new Map((results[i] || []).map(r => [r.variable, r]));
-            for (const v of p.variables) {
-                const r = byVar.get(v.variable);
-                if (!v.comparable || (r && isFalse(r.comparable))) { left.push(v.label); continue; }
-                if (r && !isMissing(r.value)) vals[v.key] = Number(r.value);
-            }
-        });
-        const failed = data.pillars.filter((p, i) => !results[i]).map(p => p.label);
-        const res = scoreDrawn(data, vals, state, spec);
-        const scope = state.scope === 'priority' && spec.scope ? ` (${escapeHtml(spec.scope.label || 'priority')})` : '';
+        // in the priority scope, an area outside it is ranked among all areas instead, and says so
+        const priority = state.scope === 'priority' && !!spec.scope;
+        const outside = priority && !sc.inScope;
+        const res = scoreDrawn(data, vals, outside ? { ...state, scope: 'global' } : state, spec);
+        const scope = priority && !outside ? ` (${escapeHtml(spec.scope.label || 'priority')})` : '';
         body.innerHTML = `
             <div class="lb-drawn-head">
                 <div class="tile"><div class="tile-label">${escapeHtml(overallLabel)} score</div><div class="tile-value">${fmt(res.overall, 'num1')}${res.partial && res.overall !== null ? '*' : ''}</div></div>
@@ -631,6 +720,7 @@ export function drawnRankCard({ engine, spec, jur, aoi, state, isCurrent = () =>
             <p class="tile-note">${[
                 paramNote ? escapeHtml(paramNote) + '.' : '',
                 'Scores use the leaderboard’s current weights; a percentile counts this area as one more of the ' + escapeHtml(peers) + '.',
+                outside ? `This area is outside the ${escapeHtml(spec.scope.label || 'priority')} list${sc.share !== null ? ` (${fmt(sc.share, 'pct')})` : ''}, so it is ranked among all ${escapeHtml(peers)}.` : '',
                 left.length ? `Left out as not comparable with whole areas: ${escapeHtml(left.join(', '))}.` : '',
                 failed.length ? `Query failed: ${escapeHtml(failed.join(', '))}.` : '',
                 res.partial && res.overall !== null ? '* Some pillars have no comparable data here; the overall score uses those present.' : '',
@@ -659,6 +749,21 @@ function bar(v, color) {
     return `<td class="num bar" style="--c:${color}"><span class="track"><i style="width:${(w * 100).toFixed(1)}%"></i></span><span class="v">${fmt(v, 'num1')}</span></td>`;
 }
 
+/** The drawn area's row: its would-be rank, marked, with no rank change. */
+function drawnRow(r, pillars, sc, spec) {
+    const open = (spec.profile_tab || 'profile').toLowerCase();
+    return `
+            <tr data-id="__drawn__" tabindex="0" class="drawn">
+                <td class="num rank" title="Would rank ${r.rank} of ${r.of} with this area">${r.rank}</td>
+                <td class="num delta"></td>
+                <td class="name"><button type="button" class="lb-name" title="Open its ${escapeHtml(open)}">${escapeHtml(r.name)}</button> <span class="lb-yours">your area</span></td>
+                <td class="num overall"><b>${fmt(r.overall, 'num1')}</b>${r.partial && r.overall !== null ? '*' : ''}</td>
+                ${pillars.map(p => bar(r.pillars[p.theme.id], p.color)).join('')}
+                ${sc ? shareCell(r, sc) : ''}
+                <td class="open"><button type="button" class="lb-open" title="Open its ${escapeHtml(open)}">›</button></td>
+            </tr>`;
+}
+
 function shareCell(r, sc) {
     const tip = r.detail ? `data-tip="${escapeHtml(escapeHtml(r.detail))}"` : '';
     return `<td class="num share${r.inScope ? ' on' : ''}" ${tip}>${r.inScope ? '<span class="badge">●</span>' : ''}${r.share === null ? '' : fmt(r.share, 'pct')}</td>`;
@@ -675,7 +780,9 @@ function downloadCsv(lb) {
     const lines = [head, ...sorted.map(r => [r.rank ?? '', r.delta || 0, r.id, r.name, round1(r.overall),
         ...pillars.map(p => round1(r.pillars[p.theme.id])), ...(sc ? [r.share ?? '', r.detail ?? ''] : [])])];
     const st = lb.stateString();
-    const meta = `# ${lb.paramNote || ''}${st ? ` · scoring: ${st}` : ' · default scoring'}`;
+    const d = lb.result.drawn;
+    const meta = `# ${lb.paramNote || ''}${st ? ` · scoring: ${st}` : ' · default scoring'}` +
+        (d?.inView && d.rank ? `\n# drawn area "${String(d.name).replace(/\n/g, ' ')}" (not a row): would rank ${d.rank} of ${d.of}, overall ${round1(d.overall)}` : '');
     const blob = new Blob([meta + '\n' + lines.map(l => l.map(q).join(',')).join('\n') + '\n'], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -767,5 +874,10 @@ export const leaderboardCss = `
 .lb-drawn-table td.bar .track i { display: block; height: 100%; background: var(--c); }
 .lb-drawn-table td.lb-drawn-none { color: var(--text-3); font-size: 12px; }
 .lb-drawn-table td.rank { text-align: right; color: var(--text-2); white-space: nowrap; }
+.lb-table tbody tr.drawn { background: color-mix(in srgb, var(--primary) 12%, var(--mix-base, white)); box-shadow: inset 3px 0 0 var(--primary); }
+.lb-table tbody tr.drawn td.rank { color: var(--text); font-style: italic; }
+.lb-yours { font-size: 10.5px; color: var(--text-2); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.lb-card > .lb-drawn-note { margin: 4px 14px; }
+.lb-card > .lb-drawn-note:empty { display: none; }
 .lb-open:hover { background: var(--primary); color: var(--on-primary, #fff); border-color: var(--primary); }
 `;

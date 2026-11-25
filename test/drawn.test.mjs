@@ -56,7 +56,8 @@ test('pillar weights and variable reversal from the link apply to a drawn area',
     assert.equal(state.vars['b.cost'].rev, true);
     const res = scoreDrawn(data, { 'a.share': 0, 'b.cost': 0 }, state, spec);
     assert.equal(res.overall, 0);          // pillar b off; worst on a
-    assert.equal(res.rank, 5);
+    assert.equal(res.rank, 4);             // ties the lowest area (score 0 as shown), so shares its rank
+    assert.equal(res.of, 5);
 });
 
 test('comparable flags: leaderboard variables and row columns', () => {
@@ -110,4 +111,14 @@ test('polygonAoi fills at res 8 without sql10 when asked', async () => {
     assert.notEqual(a8.key, polygonAoi([g], 'x').key);
     assert.match(polygonAoi([g], 'x').sql10, /wkt, 10/);
     assert.throws(() => polygonAoi([g], 'x', { res: 9 }));
+});
+
+test('a drawn area ranks against the scores the table shows: ties share the rank, of = n + 1', () => {
+    const state = defaultState(spec);
+    const shown = score(data, state, spec).rows.map(r => r.overall);
+    const res = scoreDrawn(data, { 'a.share': 2.5, 'b.cost': 2.5 }, state, spec);
+    assert.equal(res.rank, 1 + shown.filter(x => x > res.overall).length);
+    assert.equal(res.of, 5);
+    const out = scoreDrawn(data, { 'a.share': 2.5 }, { ...state, scope: 'priority' }, spec, { inScope: false });
+    assert.equal(out.rank, null);
 });
