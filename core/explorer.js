@@ -1017,7 +1017,7 @@ class Explorer {
             this.lbFocusAtEntry = this.lb.focusId;
             this.mapView.clearSelection();
             this.lb.setDrawn(this.drawnForLeaderboard(), this.drawnLabel());
-            await this.lb.load(s.params, this.paramNote());
+            await this.lb.load(s.params, this.paramNote(), { reveal: true });
         } else {
             this.mapView.setJurisdictionColors(null);
             this.$('#map-legend').hidden = true;

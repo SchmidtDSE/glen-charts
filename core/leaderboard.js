@@ -101,11 +101,17 @@ export class Leaderboard {
 
     /* ------------------------------------------------------------- data */
 
-    async load(params, paramNote = '') {
+    /**
+     * reveal: scroll the drawn area's row into view once it is placed (on opening
+     * the leaderboard), unless the reader has scrolled or is editing the scoring
+     * by then. A change of setting reloads without it, so the table does not jump.
+     */
+    async load(params, paramNote = '', { reveal = false } = {}) {
         const token = ++this.token;
         this.params = params;
         this.paramNote = paramNote;
         this.renderShell();
+        this.reveal = reveal ? { top: this.el.scrollTop } : null;
         try {
             const data = await loadData(this.ctx.engine, this.spec, this.jur, params);
             if (token !== this.token) return;
@@ -134,10 +140,25 @@ export class Leaderboard {
             if (token !== this.token || aoi !== this.drawnAoi) return;
             this.drawn = { ...v, ...sc };
             this.renderTable();
+            const r = this.reveal;
+            this.reveal = null;
+            const busy = this.el.querySelector('.lb-scoring')?.contains(document.activeElement);
+            if (r && !busy && Math.abs(this.el.scrollTop - r.top) < 40) this.showDrawnRow();
         } catch (err) {
             console.error(err);
             if (note && token === this.token) note.textContent = `Could not score ${this.drawnLabel}: ${err.message}`;
         }
+    }
+
+    /** Scroll the drawn area's row to the middle of the panel and focus it (its note's link, and on opening). */
+    showDrawnRow() {
+        const tr = this.el.querySelector('.lb-table tbody tr.drawn');
+        if (!tr) return;
+        tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        tr.focus({ preventScroll: true });
+        tr.classList.remove('flash');
+        void tr.offsetWidth;          // restart the highlight
+        tr.classList.add('flash');
     }
 
     /** Scores for the current state, and for the default state in the same scope (for rank changes). */
@@ -333,6 +354,7 @@ export class Leaderboard {
                 };
             });
             card.querySelector('.lb-search').oninput = e => { this.q = e.target.value; this.drawRows(); };
+            card.addEventListener('click', e => { if (e.target.closest('.lb-show-drawn')) this.showDrawnRow(); });
             const tbody = card.querySelector('tbody');
             tbody.addEventListener('click', e => {
                 const tr = e.target.closest('tr');
@@ -365,7 +387,7 @@ export class Leaderboard {
             const scopeLabel = escapeHtml(sc?.label || 'priority');
             dn.innerHTML = !d ? (this.drawn ? '' : dn.innerHTML)
                 : !d.inView ? `<b>${escapeHtml(d.name)}</b> (your area) is outside the ${scopeLabel} list${d.share !== null ? ` (${fmt(d.share, 'pct')})` : ''}, so it is not in this view.`
-                : d.rank ? `<b>${escapeHtml(d.name)}</b> (your area) would rank ${d.rank} of ${d.of} with itself counted; the other ranks are without it. Its percentiles count it as one more of the ${escapeHtml(peers)}, and leave out variables that do not compare with whole areas.`
+                : d.rank ? `<b>${escapeHtml(d.name)}</b> (your area) would rank ${d.rank} of ${d.of} with itself counted; the other ranks are without it. <button type="button" class="lb-show-drawn">Show its row</button><br>Its percentiles count it as one more of the ${escapeHtml(peers)}, and leave out variables that do not compare with whole areas.`
                 : `<b>${escapeHtml(d.name)}</b> (your area) has no comparable values to rank at these weights.`;
         }
         this.drawRows();
@@ -876,6 +898,9 @@ export const leaderboardCss = `
 .lb-drawn-table td.rank { text-align: right; color: var(--text-2); white-space: nowrap; }
 .lb-table tbody tr.drawn { background: color-mix(in srgb, var(--primary) 12%, var(--mix-base, white)); box-shadow: inset 3px 0 0 var(--primary); }
 .lb-table tbody tr.drawn td.rank { color: var(--text); font-style: italic; }
+.lb-table tbody tr.drawn.flash { animation: lb-flash 1.6s ease-out; }
+@keyframes lb-flash { 0%, 30% { background: color-mix(in srgb, var(--primary) 35%, var(--mix-base, white)); } }
+.lb-show-drawn { border: 0; background: none; padding: 0; font: inherit; color: var(--primary); text-decoration: underline; cursor: pointer; }
 .lb-yours { font-size: 10.5px; color: var(--text-2); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
 .lb-card > .lb-drawn-note { margin: 4px 14px; }
 .lb-card > .lb-drawn-note:empty { display: none; }
