@@ -30,6 +30,12 @@
  * ([{ id, label, file, full?, sources? }]: tabs showing an HTML file, e.g. an About page;
  * sources: true appends the dataset citations from data/sources.json), chat (core/chat.js:
  * an optional assistant, loaded only when this block is present; without it no LLM code loads).
+ * area_sources ([{ type: "polygon" | "isochrone", id?, label?, description?, kind_label?,
+ * compare_with? }]) turns on the library's own area sources without a page script; they follow
+ * any extension sources. A source's areas are compared with one area type: compare_with (an area
+ * type id, or false for none), else the leaderboard's type. The percentile strip then places a
+ * drawn area among that type's areas, and the profile adds a card with the score and rank it
+ * would have on the leaderboard (core/leaderboard.js).
  * Extensions may add views: [{ id, label, full?, render(el, ctx) }], tabs of their own.
  * A view with full: true hides the map and gives the panel the whole width.
  * A param with "control": "slider" is drawn as a slider over its options. A slider param with
@@ -51,7 +57,7 @@
 
 import { loadConfig, Engine, jurisdictionAoi, statewideAoi, resolveParams, paramActive, optionValue, optionLabel, nearestOption, paramKey, paramTokens, paramDefault, paramValues, paramValueLabel, multiLabel, toggleMulti, toggleGroup, rangeValue, overlayFilter } from './engine.js';
 import { MapView, renderLegend, quantileBreaks, mapQueries } from './map.js';
-import { Leaderboard, leaderboardCss } from './leaderboard.js';
+import { Leaderboard, leaderboardCss, drawnRankCard, parseState } from './leaderboard.js';
 import { renderThemeCard, builtinCharts, shortErr } from './report.js';
 import { wireExportButton } from './export.js';
 import { wirePrintButton } from './print-report.js';
@@ -177,6 +183,7 @@ class Explorer {
         this.state.params = resolveParams(app);
         for (const t of config.themes) this.state.themes.add(t.id);
         this.state.mapTheme = config.themes.find(t => t.map)?.id ?? null;
+        await this.configSources();
         this.mountSources();
         this.renderModeButtons();
         this.renderParams();
@@ -287,6 +294,28 @@ class Explorer {
         if (modes.length <= 1) this.el.querySelectorAll('#step-place .step-num').forEach(n => { n.textContent = '1'; });
     }
 
+    /** The library's area sources that app.area_sources turns on, after any extension sources. */
+    async configSources() {
+        const made = [];
+        for (const spec of this.config.app.area_sources || []) {
+            const load = SOURCE_TYPES[spec.type];
+            if (!load) { console.error(`area_sources: unknown type "${spec.type}"`); continue; }
+            const make = await load();
+            const source = make({ id: spec.id, label: spec.label, description: spec.description, kindLabel: spec.kind_label });
+            if (spec.compare_with !== undefined) source.compareWith = spec.compare_with;
+            if ([...this.ext.sources, ...made].some(x => x.id === source.id)) { console.error(`area_sources: a source "${source.id}" already exists; give this one an id`); continue; }
+            made.push(source);
+        }
+        if (made.length) this.ext.sources = [...this.ext.sources, ...made];
+    }
+
+    /** The area type a source's areas are compared with: its compareWith (false for none), else the leaderboard's; null for none. */
+    compareKindFor(source) {
+        const app = this.config.app;
+        const want = source.compareWith !== undefined ? source.compareWith : app.leaderboard ? this.leaderboardJur()?.id : null;
+        return want && app.jurisdictions.some(j => j.id === want) ? want : null;
+    }
+
     mountSources() {
         const wrap = this.$('#source-steps');
         for (const s of this.ext.sources) {
@@ -298,7 +327,7 @@ class Explorer {
             s.mount(step, {
                 mapView: this.mapView,
                 engine: this.engine,
-                setAoi: aoi => { aoi.params = this.state.params; this.setAoi(aoi); },
+                setAoi: aoi => { aoi.params = this.state.params; aoi.compareKind ??= this.compareKindFor(s); this.setAoi(aoi); },
                 select: () => { if (this.state.mode !== s.id) this.setMode(s.id, { restoring: true }); },
                 showHint: t => this.showHint(t),
                 hideHint: () => this.hideHint(),
@@ -1070,6 +1099,14 @@ class Explorer {
             params: s.params,
             onMapToggle: id => this.setMapTheme(this.state.mapTheme === id ? null : id),
         };
+        // a drawn area compared with the leaderboard's areas: the score and rank it would have
+        const lbSpec = app.leaderboard;
+        if (lbSpec && aoi.compareKind && aoi.kind !== aoi.compareKind && aoi.compareKind === this.leaderboardJur().id) {
+            r.appendChild(drawnRankCard({
+                engine: this.engine, spec: lbSpec, jur: this.leaderboardJur(), aoi, paramNote, isCurrent: opts.isCurrent,
+                state: this.lb?.state ?? parseState(lbSpec, this.pendingScore || ''),
+            }));
+        }
         if (this.config.overview) r.appendChild(renderThemeCard(this.engine, this.config.overview, aoi, { ...opts, overview: true }));
         if (!s.themes.size && this.config.themes.length > 1) {
             const n = document.createElement('div');
@@ -1543,6 +1580,12 @@ async function fetchJson(url) {
         return r.ok ? await r.json() : null;
     } catch { return null; }
 }
+
+/** The library's area sources by app.area_sources type, loaded only when an app turns one on. */
+const SOURCE_TYPES = {
+    polygon: () => import('../sources/polygon-source.js').then(m => m.polygonSource),
+    isochrone: () => import('../sources/isochrone-source.js').then(m => m.isochroneSource),
+};
 
 /** Dataset citations from data/sources.json (written by precompute sources), for a page with sources: true. */
 function sourcesHtml(sources) {

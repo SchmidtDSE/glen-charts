@@ -24,10 +24,19 @@
  *   peer_label    e.g. "coastal ecoregions"   (default: the area type's peer_label)
  *   note          text under the chart, e.g. "Provisional scores"
  *   label_lines   wrap long variable names onto up to N lines   (default 2)
+ *
+ * A drawn area with a comparison type (aoi.compareKind, see explorer.js) is
+ * placed among that type's areas: its dot is drawn over their ticks and its
+ * percentile is the leaderboard's mid-rank with the area counted as one more
+ * member, by direction_field or else the row's dir column. rank_field is not
+ * used, since a live query over one drawn area cannot rank it. A variable that
+ * is not comparable (a comparable column that is false, or "comparable": false
+ * on the leaderboard's variable) shows its value without a percentile.
  */
 
 import { fmt, escapeHtml, isMissing, ordinal } from '../core/format.js';
 import { hover, el, rowLabel } from '../core/charts.js';
+import { percentileAmong, isComparable } from '../core/leaderboard.js';
 
 export const percentileStrip = {
     async load({ engine, theme, chart, aoi }) {
@@ -38,7 +47,7 @@ export const percentileStrip = {
         return { rows, dist };
     },
 
-    render(container, spec, { rows, dist }, { engine, aoi }) {
+    render(container, spec, { rows, dist }, { engine, aoi, theme }) {
         container.innerHTML = '';
         if (!rows || !rows.length) {
             container.innerHTML = '<div class="sub">No data in this area.</div>';
@@ -52,7 +61,9 @@ export const percentileStrip = {
             if (!byKey.has(String(r[key]))) byKey.set(String(r[key]), []);
             byKey.get(String(r[key])).push(r);
         }
-        const jur = engine.config.app.jurisdictions.find(j => j.id === aoi.kind);
+        // a drawn area is ranked among the areas of its comparison type, as one more of them
+        const drawn = !!aoi.compareKind && aoi.kind !== aoi.compareKind;
+        const jur = engine.config.app.jurisdictions.find(j => j.id === (drawn ? aoi.compareKind : aoi.kind));
         const peers = spec.peer_label || jur?.peer_label || jur?.label?.toLowerCase() || 'areas';
 
         const W = Math.max(320, Math.round(container.clientWidth || 480));
@@ -74,7 +85,8 @@ export const percentileStrip = {
             const v = isMissing(r[valueCol]) ? null : Number(r[valueCol]);
             const peersRows = byKey.get(String(r[key])) || [];
             const vals = peersRows.map(p => p[valueCol]).filter(x => !isMissing(x)).map(Number);
-            const rank = rankOf(spec, r, v, vals);
+            const comparable = !drawn || isComparable(engine.config.app, theme?.id, r[key], r);
+            const rank = !comparable ? null : drawn ? drawnRank(spec, r, v, vals) : rankOf(spec, r, v, vals);
 
             // track
             svg.appendChild(el('line', { x1: stripX0, x2: stripX1, y1: cy, y2: cy, class: 'pstrip-track' }));
@@ -85,7 +97,8 @@ export const percentileStrip = {
                     const dot = el('circle', { cx: sc(v), cy, r: 5.5, class: 'pstrip-me' });
                     const clamped = log && v <= 0 ? '<br><i>≤ 0: drawn at the axis minimum</i>' : '';
                     hover(dot, `<b>${escapeHtml(name)}</b><br>${escapeHtml(aoi.label)}: ${fmt(v, format)}` +
-                        (rank !== null ? `<br>${ordinal(rank)} percentile of ${vals.length} ${escapeHtml(peers)}` : '') + clamped);
+                        (rank !== null ? `<br>${ordinal(rank)} percentile ${drawn ? `if one of the ${vals.length} ${escapeHtml(peers)}` : `of ${vals.length} ${escapeHtml(peers)}`}` : '') +
+                        (comparable ? '' : `<br><i>Not compared: this value depends on the area's size</i>`) + clamped);
                     svg.appendChild(dot);
                 }
                 const lo = el('title'); lo.textContent = `range ${fmt(Math.min(...vals), format)} – ${fmt(Math.max(...vals), format)}${log ? ' (log scale)' : ''}`;
@@ -96,7 +109,7 @@ export const percentileStrip = {
             vt.textContent = fmt(v, format);
             svg.appendChild(vt);
             const rt = el('text', { x: W - textW, y: cy + 11, class: 'pstrip-rank' });
-            rt.textContent = rank !== null ? `${ordinal(rank)} percentile` : (v === null ? '' : 'rank not available');
+            rt.textContent = rank !== null ? `${ordinal(rank)} percentile` : (v === null ? '' : comparable ? 'rank not available' : 'not compared');
             svg.appendChild(rt);
         });
         container.appendChild(svg);
@@ -104,6 +117,7 @@ export const percentileStrip = {
         const foot = document.createElement('div');
         foot.className = 'tile-note';
         foot.textContent = (ids.size ? `Ticks: all ${ids.size} ${peers}; dot: ${aoi.label}.` : 'Ranks need precomputed results for every area at this setting.') +
+            (drawn && ids.size ? ` Percentiles count ${aoi.label} as one more of the ${peers}.` : '') +
             (spec.note ? ' ' + spec.note : '');
         container.appendChild(foot);
     },
@@ -127,6 +141,13 @@ export function rankOf(spec, row, v, vals) {
     let p = 100 * (below + 0.5 * ties) / vals.length;
     if (spec.direction_field && Number(row[spec.direction_field]) < 0) p = 100 - p;
     return Math.round(p);
+}
+
+/** A drawn area's percentile (0–100, rounded) among `vals`, counted as one more member; direction from direction_field, else the row's dir. */
+export function drawnRank(spec, row, v, vals) {
+    const d = spec.direction_field ? row[spec.direction_field] : row.dir;
+    const p = percentileAmong(vals, v, isMissing(d) ? 1 : Number(d));
+    return p === null ? null : Math.round(p);
 }
 
 /** Linear or log x-scale over the values, onto [x0, x1]. */

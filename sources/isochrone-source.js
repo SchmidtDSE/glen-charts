@@ -8,6 +8,8 @@
  *
  *   createExplorer({ extensions: { sources: [isochroneSource()] } })
  *
+ * or, with no page script: "area_sources": [{ "type": "isochrone" }] in app.json.
+ *
  * app.json:
  *   "routing":    { "url": "https://valhalla1.openstreetmap.de" }
  *   "isochrones": { "modes": ["walk", "bike", "drive"], "minutes": [5, 10, 15],
@@ -21,7 +23,7 @@ import { escapeHtml, fmt } from '../core/format.js';
 
 const BAND_COLORS = ['#0f5132', '#2f8f5b', '#7cc59a', '#b9e3c6'];   // as the map's isochrone layers
 
-export function isochroneSource({ id = 'reach', label = 'Travel time', description = 'The area reachable from a point in a given travel time', kindLabel = 'Reachable area' } = {}) {
+export function isochroneSource({ id = 'reach', label = 'Travel time', description = 'The area reachable from a point in a given travel time', kindLabel = 'Reachable area', compareWith } = {}) {
     let ctx = null, cfg = null, el = null, active = false;
     const st = { origin: null, mode: null, minutes: null, bands: null, aoi: null, token: 0 };
 
@@ -145,6 +147,7 @@ export function isochroneSource({ id = 'reach', label = 'Travel time', descripti
         label,
         description,
         kindLabel,
+        ...(compareWith !== undefined && { compareWith }),
 
         mount(step, c) {
             ctx = c;

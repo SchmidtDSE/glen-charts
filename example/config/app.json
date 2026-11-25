@@ -30,6 +30,16 @@
             "format": "{} km"
         }
     ],
+    "default_mode": "meow",
+    "area_sources": [
+        {
+            "type": "polygon",
+            "label": "Draw or upload",
+            "description": "Draw a polygon on the map or upload a GeoJSON file",
+            "kind_label": "Drawn area",
+            "compare_with": "meow"
+        }
+    ],
     "overview": "physical",
     "themes": [],
     "jurisdictions": [

@@ -652,8 +652,10 @@ export class Engine {
      * [{ __id, ...row }]. From the query's precomputed "all" results when
      * present, else data/distributions/<kind>[/<paramKey>]/<theme>.json
      * (`precompute distributions`, built from per-area files); null when neither exists.
+     * A drawn area with a comparison type (aoi.compareKind) gets that type's areas.
      */
     async distribution(theme, queryName, aoi) {
+        if (aoi.compareKind && aoi.kind !== aoi.compareKind) aoi = { ...aoi, kind: aoi.compareKind, id: null };
         if (!aoi.kind || aoi.kind === 'state' || aoi.kind === 'polygon') return null;
         const byId = await this.allResults(theme, queryName, aoi);
         if (byId) return Object.entries(byId).flatMap(([id, rows]) => rows.map(r => ({ __id: id, ...r })));
